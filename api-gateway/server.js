@@ -6,7 +6,19 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors({ origin: 'http://localhost:4200', credentials: true }));
+// URLs de los microservicios (en Render son https://xxx.onrender.com, en local localhost)
+const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://localhost:3001';
+const TRATAMIENTOS_SERVICE_URL = process.env.TRATAMIENTOS_SERVICE_URL || 'http://localhost:3002';
+const CITAS_SERVICE_URL = process.env.CITAS_SERVICE_URL || 'http://localhost:3003';
+const ESTUDIOS_SERVICE_URL = process.env.ESTUDIOS_SERVICE_URL || 'http://localhost:3004';
+
+// Soporta uno o varios orígenes separados por coma en FRONTEND_URL
+const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:4200')
+  .split(',')
+  .map(o => o.trim())
+  .filter(Boolean);
+
+app.use(cors({ origin: allowedOrigins, credentials: true }));
 
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', service: 'api-gateway' });
@@ -14,79 +26,72 @@ app.get('/health', (req, res) => {
 
 // ==================== PROXY PARA AUTH SERVICE ====================
 app.use('/api/usuarios', createProxyMiddleware({
-  target: 'http://localhost:3001',
+  target: AUTH_SERVICE_URL,
   changeOrigin: true,
   pathRewrite: { '^/api/usuarios': '/usuarios' },
-  on: {
-    error: (err, req, res) => {
-      res.status(500).json({ error: 'Error en el servicio de autenticación', mensaje: err.message });
-    }
+  onError: (err, req, res) => {
+    console.error('Proxy error (usuarios):', err.message);
+    res.status(502).json({ error: 'Error en el servicio de autenticación', mensaje: err.message });
   }
 }));
 
 app.use('/api/auth', createProxyMiddleware({
-  target: 'http://localhost:3001',
+  target: AUTH_SERVICE_URL,
   changeOrigin: true,
   pathRewrite: { '^/api/auth': '/auth' },
-  on: {
-    error: (err, req, res) => {
-      res.status(500).json({ error: 'Error en el servicio de autenticación', mensaje: err.message });
-    }
+  onError: (err, req, res) => {
+    console.error('Proxy error (auth):', err.message);
+    res.status(502).json({ error: 'Error en el servicio de autenticación', mensaje: err.message });
   }
 }));
 
 // ==================== PROXY PARA TRATAMIENTOS SERVICE ====================
 app.use('/api/tratamientos', createProxyMiddleware({
-  target: 'http://localhost:3002',
+  target: TRATAMIENTOS_SERVICE_URL,
   changeOrigin: true,
   pathRewrite: { '^/api/tratamientos': '/tratamientos' },
-  on: {
-    error: (err, req, res) => {
-      res.status(500).json({ error: 'Error en el servicio de tratamientos', mensaje: err.message });
-    }
+  onError: (err, req, res) => {
+    console.error('Proxy error (tratamientos):', err.message);
+    res.status(502).json({ error: 'Error en el servicio de tratamientos', mensaje: err.message });
   }
 }));
 
 app.use('/api/medicamentos', createProxyMiddleware({
-  target: 'http://localhost:3002',
+  target: TRATAMIENTOS_SERVICE_URL,
   changeOrigin: true,
   pathRewrite: { '^/api/medicamentos': '/medicamentos' },
-  on: {
-    error: (err, req, res) => {
-      res.status(500).json({ error: 'Error en el servicio de tratamientos', mensaje: err.message });
-    }
+  onError: (err, req, res) => {
+    console.error('Proxy error (medicamentos):', err.message);
+    res.status(502).json({ error: 'Error en el servicio de tratamientos', mensaje: err.message });
   }
 }));
 
 // ==================== PROXY PARA CITAS SERVICE ====================
 app.use('/api/citas', createProxyMiddleware({
-  target: 'http://localhost:3003',
+  target: CITAS_SERVICE_URL,
   changeOrigin: true,
   pathRewrite: { '^/api/citas': '/citas' },
-  on: {
-    error: (err, req, res) => {
-      res.status(500).json({ error: 'Error en el servicio de citas', mensaje: err.message });
-    }
+  onError: (err, req, res) => {
+    console.error('Proxy error (citas):', err.message);
+    res.status(502).json({ error: 'Error en el servicio de citas', mensaje: err.message });
   }
 }));
 
-// ==================== PROXY PARA ESTUDIOS SERVICE (NUEVO) ====================
+// ==================== PROXY PARA ESTUDIOS SERVICE ====================
 app.use('/api/estudios', createProxyMiddleware({
-  target: 'http://localhost:3004',
+  target: ESTUDIOS_SERVICE_URL,
   changeOrigin: true,
   pathRewrite: { '^/api/estudios': '/estudios' },
-  on: {
-    error: (err, req, res) => {
-      res.status(500).json({ error: 'Error en el servicio de estudios', mensaje: err.message });
-    }
+  onError: (err, req, res) => {
+    console.error('Proxy error (estudios):', err.message);
+    res.status(502).json({ error: 'Error en el servicio de estudios', mensaje: err.message });
   }
 }));
-
-// Para desarrollo - endpoint de prueba
-app.get('/api/estudios/health', (req, res) => {
-  res.json({ status: 'OK', service: 'estudios-proxy' });
-});
 
 app.listen(PORT, () => {
   console.log(`✅ API Gateway running on port ${PORT}`);
+  console.log(`AUTH_SERVICE_URL: ${AUTH_SERVICE_URL}`);
+  console.log(`TRATAMIENTOS_SERVICE_URL: ${TRATAMIENTOS_SERVICE_URL}`);
+  console.log(`CITAS_SERVICE_URL: ${CITAS_SERVICE_URL}`);
+  console.log(`ESTUDIOS_SERVICE_URL: ${ESTUDIOS_SERVICE_URL}`);
 });
