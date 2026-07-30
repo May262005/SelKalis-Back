@@ -1,0 +1,88 @@
+services:
+  # ==================== API GATEWAY ====================
+  - type: web
+    name: selkalis-api-gateway
+    runtime: node
+    rootDir: api-gateway
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: FRONTEND_URL
+        sync: false
+      - key: AUTH_SERVICE_URL
+        sync: false
+      - key: TRATAMIENTOS_SERVICE_URL
+        sync: false
+      - key: CITAS_SERVICE_URL
+        sync: false
+      - key: ESTUDIOS_SERVICE_URL
+        sync: false
+
+  # ==================== AUTH SERVICE ====================
+  - type: web
+    name: selkalis-auth-service
+    runtime: node
+    rootDir: services/auth-service
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: EMAIL_USER
+        sync: false
+      - key: EMAIL_PASS
+        sync: false
+
+  # ==================== TRATAMIENTOS SERVICE ====================
+  - type: web
+    name: selkalis-tratamientos-service
+    runtime: node
+    rootDir: services/tratamientos-service
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+
+  # ==================== CITAS SERVICE ====================
+  - type: web
+    name: selkalis-citas-service
+    runtime: node
+    rootDir: services/citas-service
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+
+  # ==================== ESTUDIOS SERVICE ====================
+  - type: web
+    name: selkalis-estudios-service
+    runtime: node
+    rootDir: services/estudios-service
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: JWT_SECRET
+        sync: false
