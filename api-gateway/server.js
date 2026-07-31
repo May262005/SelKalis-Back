@@ -35,11 +35,16 @@ function esperar(ms) {
 async function pingConReintentos(url, intentos = 9, esperaMs = 10000) {
   let ultimoError = null;
   for (let i = 1; i <= intentos; i++) {
+    const inicio = Date.now();
     try {
       const respuesta = await fetch(url, { signal: AbortSignal.timeout(15000) });
+      const ms = Date.now() - inicio;
+      console.log(`[keep-alive] ${url} intento ${i}/${intentos} -> status ${respuesta.status} (${ms}ms)`);
       if (respuesta.ok) return 'awake';
       ultimoError = `error ${respuesta.status}`;
     } catch (err) {
+      const ms = Date.now() - inicio;
+      console.log(`[keep-alive] ${url} intento ${i}/${intentos} -> excepcion "${err.message}" (${ms}ms)`);
       ultimoError = `unreachable (${err.message})`;
     }
     if (i < intentos) await esperar(esperaMs);
