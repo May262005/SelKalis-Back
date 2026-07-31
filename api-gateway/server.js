@@ -24,6 +24,38 @@ app.get('/health', (req, res) => {
   res.json({ status: 'OK', service: 'api-gateway' });
 });
 
+// ==================== KEEP-ALIVE (evita que los servicios se duerman) ====================
+// Un cron externo (cron-job.org, UptimeRobot, etc.) llama a este endpoint cada ~10 min.
+// Al recibir tráfico, este servicio (gateway) no se duerme, y al hacer ping a los otros
+// 4 servicios, tampoco se duermen ellos.
+app.get('/api/keep-alive', async (req, res) => {
+  const targets = {
+    auth: `${AUTH_SERVICE_URL}/health`,
+    tratamientos: `${TRATAMIENTOS_SERVICE_URL}/health`,
+    citas: `${CITAS_SERVICE_URL}/health`,
+    estudios: `${ESTUDIOS_SERVICE_URL}/estudios/health`
+  };
+
+  const resultados = {};
+
+  await Promise.all(
+    Object.entries(targets).map(async ([nombre, url]) => {
+      try {
+        const respuesta = await fetch(url, { signal: AbortSignal.timeout(45000) });
+        resultados[nombre] = respuesta.ok ? 'awake' : `error ${respuesta.status}`;
+      } catch (err) {
+        resultados[nombre] = `unreachable (${err.message})`;
+      }
+    })
+  );
+
+  res.json({
+    gateway: 'awake',
+    timestamp: new Date().toISOString(),
+    servicios: resultados
+  });
+});
+
 // Timeout generoso para dar tiempo a que un servicio "dormido" en Render despierte
 const PROXY_TIMEOUT_MS = 60000;
 
