@@ -79,6 +79,37 @@ function formatearTamano(bytes) {
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
+// ==================== EXTRAER USUARIO DEL TOKEN ====================
+function extraerUsuarioId(req) {
+  try {
+    // Obtener token del header Authorization
+    const authHeader = req.headers.authorization;
+    if (!authHeader) {
+      console.log('⚠️ No hay token de autenticación');
+      return null;
+    }
+
+    const token = authHeader.split(' ')[1];
+    if (!token) {
+      console.log('⚠️ Token no encontrado en el header');
+      return null;
+    }
+
+    // Decodificar el token JWT (sin verificar, solo extraer payload)
+    try {
+      const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+      console.log('✅ Usuario autenticado:', payload.id || payload.sub);
+      return payload.id || payload.sub;
+    } catch (decodeError) {
+      console.error('❌ Error decodificando token:', decodeError.message);
+      return null;
+    }
+  } catch (error) {
+    console.error('❌ Error extrayendo usuario:', error.message);
+    return null;
+  }
+}
+
 // ==================== ENDPOINTS ====================
 
 // HEALTH CHECK
@@ -93,8 +124,15 @@ app.get('/health', (req, res) => {
 // GET /documentos - Listar documentos
 app.get('/documentos', async (req, res) => {
   try {
-    // TODO: Extraer usuario_id del token JWT
-    const usuarioId = req.headers['x-user-id'] || 'test-user-id';
+    const usuarioId = extraerUsuarioId(req);
+    
+    if (!usuarioId) {
+      return res.status(401).json({
+        success: false,
+        error: 'Usuario no autenticado'
+      });
+    }
+
     const { categoria } = req.query;
 
     let query = supabase
@@ -138,7 +176,14 @@ app.get('/documentos', async (req, res) => {
 app.get('/documentos/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const usuarioId = req.headers['x-user-id'] || 'test-user-id';
+    const usuarioId = extraerUsuarioId(req);
+    
+    if (!usuarioId) {
+      return res.status(401).json({
+        success: false,
+        error: 'Usuario no autenticado'
+      });
+    }
 
     const { data, error } = await supabase
       .from('documentos')
@@ -175,7 +220,14 @@ app.get('/documentos/:id', async (req, res) => {
 app.get('/documentos/:id/descargar', async (req, res) => {
   try {
     const { id } = req.params;
-    const usuarioId = req.headers['x-user-id'] || 'test-user-id';
+    const usuarioId = extraerUsuarioId(req);
+    
+    if (!usuarioId) {
+      return res.status(401).json({
+        success: false,
+        error: 'Usuario no autenticado'
+      });
+    }
 
     const { data, error } = await supabase
       .from('documentos')
@@ -191,7 +243,6 @@ app.get('/documentos/:id/descargar', async (req, res) => {
       });
     }
 
-    // Redirigir a la URL pública de Supabase
     res.redirect(data.url);
 
   } catch (error) {
@@ -208,7 +259,14 @@ app.post('/documentos/upload', upload.single('file'), async (req, res) => {
   try {
     const file = req.file;
     const { nombre, categoria, descripcion } = req.body;
-    const usuarioId = req.headers['x-user-id'] || 'test-user-id';
+    const usuarioId = extraerUsuarioId(req);
+    
+    if (!usuarioId) {
+      return res.status(401).json({
+        success: false,
+        error: 'Usuario no autenticado'
+      });
+    }
 
     if (!file) {
       return res.status(400).json({
@@ -298,7 +356,14 @@ app.post('/documentos/upload', upload.single('file'), async (req, res) => {
 app.delete('/documentos/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const usuarioId = req.headers['x-user-id'] || 'test-user-id';
+    const usuarioId = extraerUsuarioId(req);
+    
+    if (!usuarioId) {
+      return res.status(401).json({
+        success: false,
+        error: 'Usuario no autenticado'
+      });
+    }
 
     // Obtener el documento primero para saber el nombre del archivo
     const { data: documento, error: findError } = await supabase
