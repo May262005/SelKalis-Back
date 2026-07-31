@@ -32,7 +32,7 @@ function esperar(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function pingConReintentos(url, intentos = 6, esperaMs = 8000) {
+async function pingConReintentos(url, intentos = 9, esperaMs = 10000) {
   let ultimoError = null;
   for (let i = 1; i <= intentos; i++) {
     try {
