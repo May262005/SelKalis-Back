@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 const path = require('path');
+const jwt = require('jsonwebtoken');
 const supabase = require('./db');
 
 require('dotenv').config({ path: path.join(__dirname, '../../.env') });
@@ -82,7 +83,6 @@ function formatearTamano(bytes) {
 // ==================== EXTRAER USUARIO DEL TOKEN ====================
 function extraerUsuarioId(req) {
   try {
-    // Obtener token del header Authorization
     const authHeader = req.headers.authorization;
     if (!authHeader) {
       console.log('⚠️ No hay token de autenticación');
@@ -95,13 +95,13 @@ function extraerUsuarioId(req) {
       return null;
     }
 
-    // Decodificar el token JWT (sin verificar, solo extraer payload)
+    // Verificar y decodificar el token JWT con la misma clave secreta
     try {
-      const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
-      console.log('✅ Usuario autenticado:', payload.id || payload.sub);
-      return payload.id || payload.sub;
-    } catch (decodeError) {
-      console.error('❌ Error decodificando token:', decodeError.message);
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      console.log('✅ Usuario autenticado:', decoded.id);
+      return decoded.id;
+    } catch (verifyError) {
+      console.error('❌ Error verificando token:', verifyError.message);
       return null;
     }
   } catch (error) {
@@ -257,11 +257,18 @@ app.get('/documentos/:id/descargar', async (req, res) => {
 // POST /documentos/upload - Subir documento
 app.post('/documentos/upload', upload.single('file'), async (req, res) => {
   try {
+    console.log('📤 Recibiendo solicitud de subida...');
+    
     const file = req.file;
     const { nombre, categoria, descripcion } = req.body;
     const usuarioId = extraerUsuarioId(req);
     
+    console.log('👤 Usuario ID:', usuarioId);
+    console.log('📄 Nombre:', nombre);
+    console.log('📁 Categoría:', categoria);
+    
     if (!usuarioId) {
+      console.log('❌ Usuario no autenticado');
       return res.status(401).json({
         success: false,
         error: 'Usuario no autenticado'
@@ -269,6 +276,7 @@ app.post('/documentos/upload', upload.single('file'), async (req, res) => {
     }
 
     if (!file) {
+      console.log('❌ No hay archivo');
       return res.status(400).json({
         success: false,
         error: 'No se ha subido ningún archivo'
@@ -276,6 +284,7 @@ app.post('/documentos/upload', upload.single('file'), async (req, res) => {
     }
 
     if (!nombre) {
+      console.log('❌ No hay nombre');
       return res.status(400).json({
         success: false,
         error: 'El nombre del documento es requerido'
@@ -285,6 +294,7 @@ app.post('/documentos/upload', upload.single('file'), async (req, res) => {
     const fileName = `${Date.now()}_${file.originalname}`;
 
     // Subir archivo a Supabase Storage
+    console.log('📤 Subiendo archivo a Storage...');
     const { data: uploadData, error: uploadError } = await supabase.storage
       .from(BUCKET_NAME)
       .upload(fileName, file.buffer, {
@@ -294,21 +304,23 @@ app.post('/documentos/upload', upload.single('file'), async (req, res) => {
       });
 
     if (uploadError) {
-      console.error('Error al subir archivo:', uploadError);
+      console.error('❌ Error al subir archivo:', uploadError);
       return res.status(500).json({
         success: false,
-        error: 'Error al subir el archivo'
+        error: 'Error al subir el archivo: ' + uploadError.message
       });
     }
+    console.log('✅ Archivo subido a Storage');
 
     // Obtener URL pública
     const { data: urlData } = supabase.storage
       .from(BUCKET_NAME)
       .getPublicUrl(fileName);
-
     const publicUrl = urlData.publicUrl;
+    console.log('🔗 URL pública:', publicUrl);
 
     // Guardar metadata en la base de datos
+    console.log('💾 Guardando en base de datos...');
     const { data: documento, error: dbError } = await supabase
       .from('documentos')
       .insert({
@@ -325,14 +337,15 @@ app.post('/documentos/upload', upload.single('file'), async (req, res) => {
       .single();
 
     if (dbError) {
-      console.error('Error al guardar metadata:', dbError);
+      console.error('❌ Error al guardar metadata:', dbError);
       // Intentar eliminar el archivo subido
       await supabase.storage.from(BUCKET_NAME).remove([fileName]);
       return res.status(500).json({
         success: false,
-        error: 'Error al guardar la información del documento'
+        error: 'Error al guardar la información del documento: ' + dbError.message
       });
     }
+    console.log('✅ Documento guardado en base de datos');
 
     res.json({
       success: true,
@@ -344,10 +357,10 @@ app.post('/documentos/upload', upload.single('file'), async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error en POST /documentos/upload:', error);
+    console.error('❌ Error en POST /documentos/upload:', error);
     res.status(500).json({
       success: false,
-      error: 'Error interno del servidor'
+      error: 'Error interno del servidor: ' + error.message
     });
   }
 });
@@ -365,7 +378,6 @@ app.delete('/documentos/:id', async (req, res) => {
       });
     }
 
-    // Obtener el documento primero para saber el nombre del archivo
     const { data: documento, error: findError } = await supabase
       .from('documentos')
       .select('url')
@@ -380,15 +392,12 @@ app.delete('/documentos/:id', async (req, res) => {
       });
     }
 
-    // Extraer el nombre del archivo de la URL
     const fileName = documento.url.split('/').pop();
 
-    // Eliminar el archivo de Storage
     if (fileName) {
       await supabase.storage.from(BUCKET_NAME).remove([fileName]);
     }
 
-    // Eliminar el registro de la base de datos
     const { error: deleteError } = await supabase
       .from('documentos')
       .delete()
