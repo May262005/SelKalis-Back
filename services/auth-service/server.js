@@ -41,19 +41,35 @@ const PORT = process.env.USER_SERVICE_PORT || 3001;
 
 // ==================== CONFIGURACIÓN DE CORREO MEJORADA ====================
 // Usando la contraseña de aplicación de Gmail
+const nodemailer = require('nodemailer');
+
 const transporter = nodemailer.createTransport({
   host: 'smtp.gmail.com',
-  port: 465,
-  secure: true, // SSL
+  port: 587,
+  secure: false, // TLS
   auth: {
-    user: process.env.EMAIL_USER, // Tu email
-    pass: process.env.EMAIL_PASS   // Tu CONTRASEÑA DE APLICACIÓN
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS
   },
-  connectionTimeout: 60000, // 60 segundos
+  connectionTimeout: 60000,
   greetingTimeout: 60000,
   socketTimeout: 60000,
   tls: {
-    rejectUnauthorized: false
+    rejectUnauthorized: false,
+    minVersion: 'TLSv1.2'
+  },
+  family: 4, // Forzar IPv4
+  pool: true,
+  maxConnections: 1,
+  maxMessages: 1
+});
+
+// Verificar conexión al iniciar
+transporter.verify(function(error, success) {
+  if (error) {
+    console.error('❌ Error en configuración de correo:', error);
+  } else {
+    console.log('✅ Servidor de correo configurado correctamente');
   }
 });
 
