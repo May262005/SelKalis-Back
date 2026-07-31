@@ -3,7 +3,7 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { createClient } = require('@supabase/supabase-js');
-const nodemailer = require('nodemailer');
+const sgMail = require('@sendgrid/mail'); // ✅ SendGrid en lugar de nodemailer
 const path = require('path');
 
 require('dotenv').config({ path: path.join(__dirname, '../../.env') });
@@ -21,12 +21,9 @@ if (!process.env.JWT_SECRET) {
   console.error('ERROR: JWT_SECRET no está definido en .env');
   process.exit(1);
 }
-if (!process.env.EMAIL_USER) {
-  console.error('ERROR: EMAIL_USER no está definido en .env');
-  process.exit(1);
-}
-if (!process.env.EMAIL_PASS) {
-  console.error('ERROR: EMAIL_PASS no está definido en .env');
+if (!process.env.SENDGRID_API_KEY) {
+  console.error('ERROR: SENDGRID_API_KEY no está definido en .env');
+  console.error('⚠️  Ve a https://signup.sendgrid.com y crea una API Key');
   process.exit(1);
 }
 
@@ -36,40 +33,14 @@ const supabase = createClient(
   process.env.SUPABASE_ANON_KEY
 );
 
+// ==================== CONFIGURACIÓN DE SENDGRID ====================
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+const FROM_EMAIL = process.env.EMAIL_USER || 'selkalis26@gmail.com';
+
+console.log('✅ SendGrid configurado correctamente');
+
 const app = express();
 const PORT = process.env.USER_SERVICE_PORT || 3001;
-
-// ==================== CONFIGURACIÓN DE CORREO MEJORADA ====================
-// Usando la contraseña de aplicación de Gmail
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 587,
-  secure: false, // TLS
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
-  },
-  connectionTimeout: 60000,
-  greetingTimeout: 60000,
-  socketTimeout: 60000,
-  tls: {
-    rejectUnauthorized: false,
-    minVersion: 'TLSv1.2'
-  },
-  family: 4, // Forzar IPv4
-  pool: true,
-  maxConnections: 1,
-  maxMessages: 1
-});
-
-// Verificar conexión al iniciar
-transporter.verify(function(error, success) {
-  if (error) {
-    console.error('❌ Error en configuración de correo:', error);
-  } else {
-    console.log('✅ Servidor de correo configurado correctamente');
-  }
-});
 
 // ==================== CORS ====================
 app.use(cors({
@@ -77,7 +48,6 @@ app.use(cors({
     'http://localhost:4200',
     'http://localhost:3000',
     'https://selkalis-frontend.onrender.com',
-    'https://tu-frontend.onrender.com' // Cambia por tu URL de frontend
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -90,25 +60,27 @@ function generarCodigo() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-// ==================== FUNCIÓN DE ENVÍO DE CORREO MEJORADA ====================
+// ==================== FUNCIÓN DE ENVÍO DE CORREO CON SENDGRID ====================
 async function enviarCorreo(email, asunto, html) {
   try {
-    console.log(`📧 Intentando enviar correo a ${email}...`);
-    console.log(`📤 Usando: ${process.env.EMAIL_USER}`);
+    console.log(`📧 Intentando enviar correo a ${email} con SendGrid...`);
     
-    const mailOptions = {
-      from: `"SelKalis" <${process.env.EMAIL_USER}>`,
+    const msg = {
       to: email,
+      from: FROM_EMAIL,
       subject: asunto,
-      html: html
+      html: html,
+      text: html.replace(/<[^>]*>/g, '') // Versión texto plano
     };
 
-    const info = await transporter.sendMail(mailOptions);
-    console.log(`✅ Correo enviado a ${email}, ID: ${info.messageId}`);
+    const response = await sgMail.send(msg);
+    console.log(`✅ Correo enviado a ${email} con SendGrid`);
     return true;
   } catch (error) {
-    console.error('❌ Error enviando correo:', error.message);
-    console.error('Detalles completos:', error);
+    console.error('❌ Error enviando correo con SendGrid:', error.message);
+    if (error.response) {
+      console.error('📄 Detalles del error:', error.response.body);
+    }
     return false;
   }
 }
@@ -195,7 +167,7 @@ app.get('/test-email', async (req, res) => {
   const result = await enviarCorreo(
     email,
     'Test de correo SelKalis',
-    '<h1>✅ Test exitoso</h1><p>El correo está funcionando correctamente</p>'
+    '<h1>✅ Test exitoso</h1><p>El correo está funcionando correctamente con SendGrid</p>'
   );
   res.json({ 
     success: result, 
@@ -358,11 +330,9 @@ app.post('/usuarios/login', async (req, res) => {
   }
 });
 
-// ==================== LOGOUT (NUEVO) ====================
+// ==================== LOGOUT ====================
 app.post('/usuarios/logout', async (req, res) => {
   try {
-    // Si tienes un sistema de blacklist de tokens, puedes agregarlo aquí
-    // Por ahora, simplemente respondemos éxito
     console.log('📤 Logout exitoso');
     res.json({
       success: true,
@@ -374,7 +344,7 @@ app.post('/usuarios/logout', async (req, res) => {
   }
 });
 
-// ==================== RECUPERAR CONTRASEÑA - SOLICITAR ====================
+// ==================== RECUPERAR CONTRASEÑA ====================
 app.post('/auth/recuperar', async (req, res) => {
   try {
     const { email } = req.body;
@@ -520,7 +490,7 @@ app.post('/auth/verificar-codigo', async (req, res) => {
   }
 });
 
-// ==================== CAMBIAR CONTRASEÑA (recuperación) ====================
+// ==================== CAMBIAR CONTRASEÑA ====================
 app.post('/auth/cambiar-password', async (req, res) => {
   try {
     const { email, token, nuevaPassword } = req.body;
@@ -754,7 +724,7 @@ app.post('/usuarios/cambiar-password', async (req, res) => {
 // ==================== INICIAR SERVIDOR ====================
 app.listen(PORT, () => {
   console.log(`✅ Auth service running on port ${PORT}`);
-  console.log(`📧 Email configurado: ${process.env.EMAIL_USER}`);
+  console.log(`📧 Email configurado: ${FROM_EMAIL}`);
   console.log(`🔑 Health check: http://localhost:${PORT}/health`);
   console.log(`📧 Test email: http://localhost:${PORT}/test-email?email=tuemail@test.com`);
 });
