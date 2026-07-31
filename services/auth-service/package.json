@@ -8,8 +8,9 @@
     "dev": "nodemon server.js"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.38.4",
     "@elastic/elasticsearch": "^9.4.2",
+    "@sendgrid/mail": "^8.1.6",
+    "@supabase/supabase-js": "^2.38.4",
     "bcryptjs": "^2.4.3",
     "chrome-launcher": "^1.2.1",
     "cors": "^2.8.5",
