@@ -47,6 +47,8 @@ const BUCKET_NAME = 'documentos';
 // Crear bucket si no existe
 async function crearBucketSiNoExiste() {
   try {
+    console.log(`📁 Verificando bucket "${BUCKET_NAME}"...`);
+    
     const { data: buckets, error } = await supabase.storage.listBuckets();
     
     if (error) {
@@ -57,16 +59,18 @@ async function crearBucketSiNoExiste() {
     const bucketExiste = buckets?.some(b => b.name === BUCKET_NAME);
     
     if (!bucketExiste) {
+      console.log(`📁 Creando bucket "${BUCKET_NAME}"...`);
       const { error: createError } = await supabase.storage.createBucket(
         BUCKET_NAME,
         {
           public: true,
           fileSizeLimit: 10485760, // 10MB
+          allowedMimeTypes: ['image/*', 'application/pdf']
         }
       );
       
       if (createError) {
-        console.error('Error al crear bucket:', createError);
+        console.error('❌ Error al crear bucket:', createError);
       } else {
         console.log(`✅ Bucket "${BUCKET_NAME}" creado correctamente`);
       }
@@ -104,7 +108,6 @@ function extraerUsuarioId(req) {
 
     console.log('🔑 Token recibido, verificando...');
 
-    // Verificar y decodificar el token JWT con la misma clave secreta
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       console.log('✅ Token verificado correctamente');
@@ -395,6 +398,7 @@ app.delete('/documentos/:id', async (req, res) => {
       });
     }
 
+    // Obtener el documento primero para saber el nombre del archivo
     const { data: documento, error: findError } = await supabase
       .from('documentos')
       .select('url')
@@ -409,12 +413,15 @@ app.delete('/documentos/:id', async (req, res) => {
       });
     }
 
+    // Extraer el nombre del archivo de la URL
     const fileName = documento.url.split('/').pop();
 
+    // Eliminar el archivo de Storage
     if (fileName) {
       await supabase.storage.from(BUCKET_NAME).remove([fileName]);
     }
 
+    // Eliminar el registro de la base de datos
     const { error: deleteError } = await supabase
       .from('documentos')
       .delete()
