@@ -8,19 +8,29 @@ const path = require('path');
 
 require('dotenv').config({ path: path.join(__dirname, '../../.env') });
 
+// ==================== VALIDACIÓN DE VARIABLES ====================
 if (!process.env.SUPABASE_URL) {
-  console.error('ERROR: SUPABASE_URL no esta definido en .env');
+  console.error('ERROR: SUPABASE_URL no está definido en .env');
   process.exit(1);
 }
 if (!process.env.SUPABASE_ANON_KEY) {
-  console.error('ERROR: SUPABASE_ANON_KEY no esta definido en .env');
+  console.error('ERROR: SUPABASE_ANON_KEY no está definido en .env');
   process.exit(1);
 }
 if (!process.env.JWT_SECRET) {
-  console.error('ERROR: JWT_SECRET no esta definido en .env');
+  console.error('ERROR: JWT_SECRET no está definido en .env');
+  process.exit(1);
+}
+if (!process.env.EMAIL_USER) {
+  console.error('ERROR: EMAIL_USER no está definido en .env');
+  process.exit(1);
+}
+if (!process.env.EMAIL_PASS) {
+  console.error('ERROR: EMAIL_PASS no está definido en .env');
   process.exit(1);
 }
 
+// ==================== CONFIGURACIÓN DE SUPABASE ====================
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_ANON_KEY
@@ -29,40 +39,62 @@ const supabase = createClient(
 const app = express();
 const PORT = process.env.USER_SERVICE_PORT || 3001;
 
+// ==================== CONFIGURACIÓN DE CORREO MEJORADA ====================
+// Usando la contraseña de aplicación de Gmail
 const transporter = nodemailer.createTransport({
   host: 'smtp.gmail.com',
-  port: 587,
-  secure: false,
+  port: 465,
+  secure: true, // SSL
   auth: {
-    user: process.env.EMAIL_USER || 'selkalis26@gmail.com',
-    pass: process.env.EMAIL_PASS || 'itnp drfj mfkn ydwz'
+    user: process.env.EMAIL_USER, // Tu email
+    pass: process.env.EMAIL_PASS   // Tu CONTRASEÑA DE APLICACIÓN
+  },
+  connectionTimeout: 60000, // 60 segundos
+  greetingTimeout: 60000,
+  socketTimeout: 60000,
+  tls: {
+    rejectUnauthorized: false
   }
 });
 
+// ==================== CORS ====================
 app.use(cors({
-  origin: ['http://localhost:4200', 'http://localhost:3000'],
-  credentials: true
+  origin: [
+    'http://localhost:4200',
+    'http://localhost:3000',
+    'https://selkalis-frontend.onrender.com',
+    'https://tu-frontend.onrender.com' // Cambia por tu URL de frontend
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.use(express.json());
 
+// ==================== FUNCIONES AUXILIARES ====================
 function generarCodigo() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
+// ==================== FUNCIÓN DE ENVÍO DE CORREO MEJORADA ====================
 async function enviarCorreo(email, asunto, html) {
   try {
+    console.log(`📧 Intentando enviar correo a ${email}...`);
+    console.log(`📤 Usando: ${process.env.EMAIL_USER}`);
+    
     const mailOptions = {
-      from: `"SelKalis" <${process.env.EMAIL_USER || 'selkalis26@gmail.com'}>`,
+      from: `"SelKalis" <${process.env.EMAIL_USER}>`,
       to: email,
       subject: asunto,
       html: html
     };
 
-    await transporter.sendMail(mailOptions);
-    console.log(`Correo enviado a ${email}`);
+    const info = await transporter.sendMail(mailOptions);
+    console.log(`✅ Correo enviado a ${email}, ID: ${info.messageId}`);
     return true;
   } catch (error) {
-    console.error('Error enviando correo:', error.message);
+    console.error('❌ Error enviando correo:', error.message);
+    console.error('Detalles completos:', error);
     return false;
   }
 }
@@ -111,16 +143,16 @@ async function enviarCorreoRecuperacion(email, codigo) {
       </div>
       <div style="background: #ffffff; padding: 32px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.06);">
         <h3 style="color: #1F3A5F; font-size: 20px; margin-top: 0; font-weight: 600;">
-          Recuperacion de contrasena
+          Recuperación de contraseña
         </h3>
         <p style="color: #4F6B8A; font-size: 15px; line-height: 1.6;">
-          Hemos recibido una solicitud para restablecer tu contrasena. Usa el siguiente codigo de verificacion:
+          Hemos recibido una solicitud para restablecer tu contraseña. Usa el siguiente código de verificación:
         </p>
         <div style="background: #EEF3F8; padding: 18px; border-radius: 10px; text-align: center; margin: 24px 0; font-size: 34px; font-weight: 700; letter-spacing: 6px; color: #1F3A5F; border: 2px dashed #D6E2EE;">
           ${codigo}
         </div>
         <p style="color: #7B8CA8; font-size: 13px; margin: 0;">
-          Este codigo expirara en 15 minutos.
+          Este código expirará en 15 minutos.
         </p>
         <p style="color: #7B8CA8; font-size: 13px; margin-top: 16px; padding-top: 16px; border-top: 1px solid #EEF3F8;">
           Si no solicitaste este cambio, ignora este mensaje.
@@ -131,7 +163,7 @@ async function enviarCorreoRecuperacion(email, codigo) {
       </div>
     </div>
   `;
-  return enviarCorreo(email, 'Recuperacion de contrasena - SelKalis', html);
+  return enviarCorreo(email, 'Recuperación de contraseña - SelKalis', html);
 }
 
 // ==================== HEALTH CHECK ====================
@@ -140,6 +172,21 @@ app.get('/health', (req, res) => {
     status: 'OK',
     service: 'auth-service',
     timestamp: new Date().toISOString()
+  });
+});
+
+// ==================== ENDPOINT DE PRUEBA DE CORREO ====================
+app.get('/test-email', async (req, res) => {
+  const email = req.query.email || 'test@example.com';
+  const result = await enviarCorreo(
+    email,
+    'Test de correo SelKalis',
+    '<h1>✅ Test exitoso</h1><p>El correo está funcionando correctamente</p>'
+  );
+  res.json({ 
+    success: result, 
+    message: result ? 'Correo enviado correctamente' : 'Error al enviar correo',
+    email: email
   });
 });
 
@@ -153,7 +200,7 @@ app.post('/usuarios/registro', async (req, res) => {
     }
 
     if (password.length < 6) {
-      return res.status(400).json({ error: 'La contrasena debe tener al menos 6 caracteres' });
+      return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
     }
 
     const { data: existingUser } = await supabase
@@ -163,13 +210,12 @@ app.post('/usuarios/registro', async (req, res) => {
       .maybeSingle();
 
     if (existingUser) {
-      return res.status(400).json({ error: 'El email ya esta registrado' });
+      return res.status(400).json({ error: 'El email ya está registrado' });
     }
 
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(password, salt);
 
-    // ✅ CORREGIDO: Insertar con fecha de creación explícita
     const now = new Date().toISOString();
     
     const { data: newUser, error: insertError } = await supabase
@@ -195,10 +241,11 @@ app.post('/usuarios/registro', async (req, res) => {
       });
     }
 
-    // Enviar correo de bienvenida
-    await enviarCorreoBienvenida(email, nombre);
+    // Enviar correo de bienvenida (sin await para no bloquear)
+    enviarCorreoBienvenida(email, nombre).catch(err => 
+      console.error('Error enviando correo de bienvenida:', err)
+    );
 
-    // Generar token para login automático
     const token = jwt.sign(
       {
         id: newUser.id,
@@ -240,7 +287,7 @@ app.post('/usuarios/login', async (req, res) => {
     const { email, password } = req.body;
 
     if (!email || !password) {
-      return res.status(400).json({ error: 'Email y contrasena requeridos' });
+      return res.status(400).json({ error: 'Email y contraseña requeridos' });
     }
 
     const { data: user } = await supabase
@@ -250,15 +297,14 @@ app.post('/usuarios/login', async (req, res) => {
       .maybeSingle();
 
     if (!user) {
-      return res.status(401).json({ error: 'Credenciales invalidas' });
+      return res.status(401).json({ error: 'Credenciales inválidas' });
     }
 
     const isValid = await bcrypt.compare(password, user.password_hash);
     if (!isValid) {
-      return res.status(401).json({ error: 'Credenciales invalidas' });
+      return res.status(401).json({ error: 'Credenciales inválidas' });
     }
 
-    // ✅ CORREGIDO: Actualizar ultimo_login con fecha explícita
     const now = new Date().toISOString();
     
     await supabase
@@ -269,7 +315,6 @@ app.post('/usuarios/login', async (req, res) => {
       })
       .eq('id', user.id);
 
-    // Obtener usuario actualizado
     const { data: updatedUser } = await supabase
       .from('usuarios')
       .select('id, nombre, apellido, email, telefono, created_at, ultimo_login')
@@ -299,14 +344,32 @@ app.post('/usuarios/login', async (req, res) => {
   }
 });
 
+// ==================== LOGOUT (NUEVO) ====================
+app.post('/usuarios/logout', async (req, res) => {
+  try {
+    // Si tienes un sistema de blacklist de tokens, puedes agregarlo aquí
+    // Por ahora, simplemente respondemos éxito
+    console.log('📤 Logout exitoso');
+    res.json({
+      success: true,
+      message: 'Sesión cerrada exitosamente'
+    });
+  } catch (error) {
+    console.error('Error en logout:', error);
+    res.status(500).json({ error: 'Error al cerrar sesión' });
+  }
+});
+
 // ==================== RECUPERAR CONTRASEÑA - SOLICITAR ====================
 app.post('/auth/recuperar', async (req, res) => {
   try {
     const { email } = req.body;
 
     if (!email) {
-      return res.status(400).json({ error: 'El correo electronico es requerido' });
+      return res.status(400).json({ error: 'El correo electrónico es requerido' });
     }
+
+    console.log(`📧 Solicitud de recuperación para: ${email}`);
 
     const { data: user } = await supabase
       .from('usuarios')
@@ -315,13 +378,17 @@ app.post('/auth/recuperar', async (req, res) => {
       .maybeSingle();
 
     if (!user) {
+      console.log(`❌ Usuario no encontrado: ${email}`);
       return res.status(404).json({
         success: false,
-        error: 'No existe una cuenta con este correo electronico'
+        error: 'No existe una cuenta con este correo electrónico'
       });
     }
 
+    console.log(`✅ Usuario encontrado: ${user.id}`);
+
     const codigo = generarCodigo();
+    console.log(`🔑 Código generado: ${codigo}`);
 
     const { error: insertError } = await supabase
       .from('recuperacion_codigos')
@@ -332,31 +399,33 @@ app.post('/auth/recuperar', async (req, res) => {
       });
 
     if (insertError) {
-      console.error('Error guardando codigo:', insertError);
+      console.error('❌ Error guardando código:', insertError);
       return res.status(500).json({
         success: false,
-        error: 'Error al generar el codigo de verificacion'
+        error: 'Error al generar el código de verificación'
       });
     }
 
+    console.log('📤 Enviando correo...');
     const emailEnviado = await enviarCorreoRecuperacion(email, codigo);
 
     if (!emailEnviado) {
+      console.error('❌ Falló el envío del correo');
       return res.status(500).json({
         success: false,
-        error: 'Error al enviar el correo electronico. Intenta de nuevo.'
+        error: 'Error al enviar el correo electrónico. Intenta de nuevo.'
       });
     }
 
-    console.log(`Codigo enviado a ${email}: ${codigo}`);
+    console.log(`✅ Código enviado a ${email}: ${codigo}`);
 
     res.json({
       success: true,
-      message: 'Codigo de verificacion enviado a tu correo electronico'
+      message: 'Código de verificación enviado a tu correo electrónico'
     });
 
   } catch (error) {
-    console.error('Error en recuperar:', error);
+    console.error('❌ Error en recuperar:', error);
     res.status(500).json({ error: 'Error al procesar la solicitud' });
   }
 });
@@ -367,11 +436,11 @@ app.post('/auth/verificar-codigo', async (req, res) => {
     const { email, codigo } = req.body;
 
     if (!email || !codigo) {
-      return res.status(400).json({ error: 'Email y codigo son requeridos' });
+      return res.status(400).json({ error: 'Email y código son requeridos' });
     }
 
     if (codigo.length !== 6 || !/^\d{6}$/.test(codigo)) {
-      return res.status(400).json({ error: 'El codigo debe ser de 6 digitos' });
+      return res.status(400).json({ error: 'El código debe ser de 6 dígitos' });
     }
 
     const { data: user } = await supabase
@@ -395,7 +464,7 @@ app.post('/auth/verificar-codigo', async (req, res) => {
       .single();
 
     if (!codigoRecord) {
-      return res.status(400).json({ error: 'Codigo invalido o ya utilizado' });
+      return res.status(400).json({ error: 'Código inválido o ya utilizado' });
     }
 
     const ahora = new Date();
@@ -407,7 +476,7 @@ app.post('/auth/verificar-codigo', async (req, res) => {
         .update({ usado: true })
         .eq('id', codigoRecord.id);
 
-      return res.status(400).json({ error: 'El codigo ha expirado. Solicita uno nuevo' });
+      return res.status(400).json({ error: 'El código ha expirado. Solicita uno nuevo' });
     }
 
     await supabase
@@ -427,13 +496,13 @@ app.post('/auth/verificar-codigo', async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Codigo verificado correctamente',
+      message: 'Código verificado correctamente',
       token: tokenRecuperacion
     });
 
   } catch (error) {
-    console.error('Error verificando codigo:', error);
-    res.status(500).json({ error: 'Error al verificar el codigo' });
+    console.error('Error verificando código:', error);
+    res.status(500).json({ error: 'Error al verificar el código' });
   }
 });
 
@@ -447,7 +516,7 @@ app.post('/auth/cambiar-password', async (req, res) => {
     }
 
     if (nuevaPassword.length < 6) {
-      return res.status(400).json({ error: 'La contrasena debe tener al menos 6 caracteres' });
+      return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
     }
 
     let decoded;
@@ -457,11 +526,11 @@ app.post('/auth/cambiar-password', async (req, res) => {
       if (error.name === 'TokenExpiredError') {
         return res.status(401).json({ error: 'El enlace ha expirado. Solicita uno nuevo' });
       }
-      return res.status(401).json({ error: 'Token invalido' });
+      return res.status(401).json({ error: 'Token inválido' });
     }
 
     if (decoded.type !== 'recuperacion') {
-      return res.status(401).json({ error: 'Token invalido para esta operacion' });
+      return res.status(401).json({ error: 'Token inválido para esta operación' });
     }
 
     if (decoded.email !== email) {
@@ -496,12 +565,12 @@ app.post('/auth/cambiar-password', async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Contrasena actualizada exitosamente'
+      message: 'Contraseña actualizada exitosamente'
     });
 
   } catch (error) {
-    console.error('Error cambiando contrasena:', error);
-    res.status(500).json({ error: 'Error al cambiar la contrasena' });
+    console.error('Error cambiando contraseña:', error);
+    res.status(500).json({ error: 'Error al cambiar la contraseña' });
   }
 });
 
@@ -511,7 +580,7 @@ app.post('/auth/reenviar-codigo', async (req, res) => {
     const { email } = req.body;
 
     if (!email) {
-      return res.status(400).json({ error: 'El correo electronico es requerido' });
+      return res.status(400).json({ error: 'El correo electrónico es requerido' });
     }
 
     const { data: user } = await supabase
@@ -523,7 +592,7 @@ app.post('/auth/reenviar-codigo', async (req, res) => {
     if (!user) {
       return res.status(404).json({
         success: false,
-        error: 'No existe una cuenta con este correo electronico'
+        error: 'No existe una cuenta con este correo electrónico'
       });
     }
 
@@ -548,20 +617,20 @@ app.post('/auth/reenviar-codigo', async (req, res) => {
     if (!emailEnviado) {
       return res.status(500).json({
         success: false,
-        error: 'Error al enviar el correo electronico'
+        error: 'Error al enviar el correo electrónico'
       });
     }
 
-    console.log(`Nuevo codigo para ${email}: ${codigo}`);
+    console.log(`Nuevo código para ${email}: ${codigo}`);
 
     res.json({
       success: true,
-      message: 'Nuevo codigo enviado a tu correo electronico'
+      message: 'Nuevo código enviado a tu correo electrónico'
     });
 
   } catch (error) {
-    console.error('Error reenviando codigo:', error);
-    res.status(500).json({ error: 'Error al reenviar el codigo' });
+    console.error('Error reenviando código:', error);
+    res.status(500).json({ error: 'Error al reenviar el código' });
   }
 });
 
@@ -628,7 +697,7 @@ app.post('/usuarios/cambiar-password', async (req, res) => {
     }
 
     if (newPassword.length < 6) {
-      return res.status(400).json({ error: 'La nueva contrasena debe tener al menos 6 caracteres' });
+      return res.status(400).json({ error: 'La nueva contraseña debe tener al menos 6 caracteres' });
     }
 
     const { data: user } = await supabase
@@ -643,7 +712,7 @@ app.post('/usuarios/cambiar-password', async (req, res) => {
 
     const isValid = await bcrypt.compare(currentPassword, user.password_hash);
     if (!isValid) {
-      return res.status(401).json({ error: 'Contrasena actual incorrecta' });
+      return res.status(401).json({ error: 'Contraseña actual incorrecta' });
     }
 
     const salt = await bcrypt.genSalt(10);
@@ -659,19 +728,21 @@ app.post('/usuarios/cambiar-password', async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Contrasena actualizada exitosamente'
+      message: 'Contraseña actualizada exitosamente'
     });
 
   } catch (error) {
-    console.error('Error cambiando contrasena:', error);
-    res.status(500).json({ error: 'Error al cambiar contrasena' });
+    console.error('Error cambiando contraseña:', error);
+    res.status(500).json({ error: 'Error al cambiar contraseña' });
   }
 });
 
+// ==================== INICIAR SERVIDOR ====================
 app.listen(PORT, () => {
-  console.log(`Auth service running on port ${PORT}`);
-  console.log(`Health check: http://localhost:${PORT}/health`);
-  console.log(`Email configurado: ${process.env.EMAIL_USER || 'selkalis26@gmail.com'}`);
+  console.log(`✅ Auth service running on port ${PORT}`);
+  console.log(`📧 Email configurado: ${process.env.EMAIL_USER}`);
+  console.log(`🔑 Health check: http://localhost:${PORT}/health`);
+  console.log(`📧 Test email: http://localhost:${PORT}/test-email?email=tuemail@test.com`);
 });
 
 module.exports = app;
