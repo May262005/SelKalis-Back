@@ -10,6 +10,13 @@ require('dotenv').config({ path: path.join(__dirname, '../../.env') });
 const app = express();
 const PORT = process.env.DOCUMENTOS_PORT || 3005;
 
+// ==================== VALIDACIÓN DE VARIABLES ====================
+if (!process.env.JWT_SECRET) {
+  console.error('❌ ERROR: JWT_SECRET no está definido en .env');
+  console.error('⚠️  El servicio de documentos necesita el mismo JWT_SECRET que auth-service');
+  process.exit(1);
+}
+
 // ==================== CORS ====================
 const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:4200')
   .split(',')
@@ -95,13 +102,22 @@ function extraerUsuarioId(req) {
       return null;
     }
 
+    console.log('🔑 Token recibido, verificando...');
+
     // Verificar y decodificar el token JWT con la misma clave secreta
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      console.log('✅ Usuario autenticado:', decoded.id);
+      console.log('✅ Token verificado correctamente');
+      console.log('👤 Usuario ID:', decoded.id);
+      console.log('📧 Email:', decoded.email);
       return decoded.id;
     } catch (verifyError) {
       console.error('❌ Error verificando token:', verifyError.message);
+      if (verifyError.name === 'TokenExpiredError') {
+        console.error('⚠️ El token ha expirado');
+      } else if (verifyError.name === 'JsonWebTokenError') {
+        console.error('⚠️ Token inválido - ¿Está usando el mismo JWT_SECRET?');
+      }
       return null;
     }
   } catch (error) {
@@ -117,7 +133,8 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'OK',
     service: 'documentos-service',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    jwt_configured: !!process.env.JWT_SECRET
   });
 });
 
@@ -129,7 +146,7 @@ app.get('/documentos', async (req, res) => {
     if (!usuarioId) {
       return res.status(401).json({
         success: false,
-        error: 'Usuario no autenticado'
+        error: 'Usuario no autenticado. Token inválido o expirado.'
       });
     }
 
@@ -271,7 +288,7 @@ app.post('/documentos/upload', upload.single('file'), async (req, res) => {
       console.log('❌ Usuario no autenticado');
       return res.status(401).json({
         success: false,
-        error: 'Usuario no autenticado'
+        error: 'Usuario no autenticado. Token inválido o expirado.'
       });
     }
 
@@ -430,6 +447,7 @@ app.delete('/documentos/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`✅ Documentos service running on port ${PORT}`);
   console.log(`📁 Bucket: ${BUCKET_NAME}`);
+  console.log(`🔑 JWT_SECRET: ${process.env.JWT_SECRET ? '✅ Configurado' : '❌ Faltante'}`);
   console.log(`🔑 Health check: http://localhost:${PORT}/health`);
   console.log(`📄 Documentos: http://localhost:${PORT}/documentos`);
 });
