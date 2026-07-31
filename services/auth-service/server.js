@@ -41,8 +41,6 @@ const PORT = process.env.USER_SERVICE_PORT || 3001;
 
 // ==================== CONFIGURACIÓN DE CORREO MEJORADA ====================
 // Usando la contraseña de aplicación de Gmail
-const nodemailer = require('nodemailer');
-
 const transporter = nodemailer.createTransport({
   host: 'smtp.gmail.com',
   port: 587,
