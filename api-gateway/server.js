@@ -24,11 +24,16 @@ app.get('/health', (req, res) => {
   res.json({ status: 'OK', service: 'api-gateway' });
 });
 
+// Timeout generoso para dar tiempo a que un servicio "dormido" en Render despierte
+const PROXY_TIMEOUT_MS = 60000;
+
 // ==================== PROXY PARA AUTH SERVICE ====================
 app.use('/api/usuarios', createProxyMiddleware({
   target: AUTH_SERVICE_URL,
   changeOrigin: true,
   pathRewrite: { '^/api/usuarios': '/usuarios' },
+  proxyTimeout: PROXY_TIMEOUT_MS,
+  timeout: PROXY_TIMEOUT_MS,
   onError: (err, req, res) => {
     console.error('Proxy error (usuarios):', err.message);
     res.status(502).json({ error: 'Error en el servicio de autenticación', mensaje: err.message });
@@ -39,6 +44,8 @@ app.use('/api/auth', createProxyMiddleware({
   target: AUTH_SERVICE_URL,
   changeOrigin: true,
   pathRewrite: { '^/api/auth': '/auth' },
+  proxyTimeout: PROXY_TIMEOUT_MS,
+  timeout: PROXY_TIMEOUT_MS,
   onError: (err, req, res) => {
     console.error('Proxy error (auth):', err.message);
     res.status(502).json({ error: 'Error en el servicio de autenticación', mensaje: err.message });
@@ -50,6 +57,8 @@ app.use('/api/tratamientos', createProxyMiddleware({
   target: TRATAMIENTOS_SERVICE_URL,
   changeOrigin: true,
   pathRewrite: { '^/api/tratamientos': '/tratamientos' },
+  proxyTimeout: PROXY_TIMEOUT_MS,
+  timeout: PROXY_TIMEOUT_MS,
   onError: (err, req, res) => {
     console.error('Proxy error (tratamientos):', err.message);
     res.status(502).json({ error: 'Error en el servicio de tratamientos', mensaje: err.message });
@@ -60,6 +69,8 @@ app.use('/api/medicamentos', createProxyMiddleware({
   target: TRATAMIENTOS_SERVICE_URL,
   changeOrigin: true,
   pathRewrite: { '^/api/medicamentos': '/medicamentos' },
+  proxyTimeout: PROXY_TIMEOUT_MS,
+  timeout: PROXY_TIMEOUT_MS,
   onError: (err, req, res) => {
     console.error('Proxy error (medicamentos):', err.message);
     res.status(502).json({ error: 'Error en el servicio de tratamientos', mensaje: err.message });
@@ -71,6 +82,8 @@ app.use('/api/citas', createProxyMiddleware({
   target: CITAS_SERVICE_URL,
   changeOrigin: true,
   pathRewrite: { '^/api/citas': '/citas' },
+  proxyTimeout: PROXY_TIMEOUT_MS,
+  timeout: PROXY_TIMEOUT_MS,
   onError: (err, req, res) => {
     console.error('Proxy error (citas):', err.message);
     res.status(502).json({ error: 'Error en el servicio de citas', mensaje: err.message });
@@ -82,6 +95,8 @@ app.use('/api/estudios', createProxyMiddleware({
   target: ESTUDIOS_SERVICE_URL,
   changeOrigin: true,
   pathRewrite: { '^/api/estudios': '/estudios' },
+  proxyTimeout: PROXY_TIMEOUT_MS,
+  timeout: PROXY_TIMEOUT_MS,
   onError: (err, req, res) => {
     console.error('Proxy error (estudios):', err.message);
     res.status(502).json({ error: 'Error en el servicio de estudios', mensaje: err.message });
