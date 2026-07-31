@@ -37,7 +37,13 @@ async function pingConReintentos(url, intentos = 9, esperaMs = 10000) {
   for (let i = 1; i <= intentos; i++) {
     const inicio = Date.now();
     try {
-      const respuesta = await fetch(url, { signal: AbortSignal.timeout(15000) });
+      const respuesta = await fetch(url, {
+        signal: AbortSignal.timeout(15000),
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/json,*/*'
+        }
+      });
       const ms = Date.now() - inicio;
       console.log(`[keep-alive] ${url} intento ${i}/${intentos} -> status ${respuesta.status} (${ms}ms)`);
       if (respuesta.ok) return 'awake';
