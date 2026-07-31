@@ -28,6 +28,25 @@ app.get('/health', (req, res) => {
 // Un cron externo (cron-job.org, UptimeRobot, etc.) llama a este endpoint cada ~10 min.
 // Al recibir tráfico, este servicio (gateway) no se duerme, y al hacer ping a los otros
 // 4 servicios, tampoco se duermen ellos.
+function esperar(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function pingConReintentos(url, intentos = 6, esperaMs = 8000) {
+  let ultimoError = null;
+  for (let i = 1; i <= intentos; i++) {
+    try {
+      const respuesta = await fetch(url, { signal: AbortSignal.timeout(15000) });
+      if (respuesta.ok) return 'awake';
+      ultimoError = `error ${respuesta.status}`;
+    } catch (err) {
+      ultimoError = `unreachable (${err.message})`;
+    }
+    if (i < intentos) await esperar(esperaMs);
+  }
+  return `failed after ${intentos} intentos: ${ultimoError}`;
+}
+
 app.get('/api/keep-alive', async (req, res) => {
   const targets = {
     auth: `${AUTH_SERVICE_URL}/health`,
@@ -40,12 +59,7 @@ app.get('/api/keep-alive', async (req, res) => {
 
   await Promise.all(
     Object.entries(targets).map(async ([nombre, url]) => {
-      try {
-        const respuesta = await fetch(url, { signal: AbortSignal.timeout(45000) });
-        resultados[nombre] = respuesta.ok ? 'awake' : `error ${respuesta.status}`;
-      } catch (err) {
-        resultados[nombre] = `unreachable (${err.message})`;
-      }
+      resultados[nombre] = await pingConReintentos(url);
     })
   );
 
