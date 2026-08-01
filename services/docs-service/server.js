@@ -12,23 +12,41 @@ const PORT = process.env.DOCUMENTOS_PORT || 3005;
 
 // ==================== VALIDACIÓN DE VARIABLES ====================
 if (!process.env.JWT_SECRET) {
-  console.error('❌ ERROR: JWT_SECRET no está definido en .env');
-  console.error('⚠️  El servicio de documentos necesita el mismo JWT_SECRET que auth-service');
+  console.error('ERROR: JWT_SECRET no está definido en .env');
+  console.error('El servicio de documentos necesita el mismo JWT_SECRET que auth-service');
   process.exit(1);
 }
 
-// ==================== CORS ====================
-const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:4200')
-  .split(',')
-  .map(o => o.trim())
-  .filter(Boolean);
+// ==================== CORS CONFIGURACIÓN CORREGIDA ====================
+// Limpiar la URL de la barra al final
+const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:4200').replace(/\/$/, '');
+const allowedOrigins = [frontendUrl, frontendUrl + '/'];
 
-app.use(cors({
-  origin: allowedOrigins,
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+console.log(`CORS permitido para: ${frontendUrl}`);
+
+// Middleware CORS manual
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  
+  // Verificar si el origen está permitido (con o sin barra)
+  if (origin && (origin === frontendUrl || origin === frontendUrl + '/')) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else if (origin && allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
+  
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Max-Age', '86400');
+  
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  
+  next();
+});
+
 app.use(express.json());
 
 // ==================== CONFIGURACIÓN MULTER ====================
@@ -46,7 +64,7 @@ const BUCKET_NAME = 'documentos';
 // Crear bucket si no existe
 async function crearBucketSiNoExiste() {
   try {
-    console.log(`📁 Verificando bucket "${BUCKET_NAME}"...`);
+    console.log(`Verificando bucket "${BUCKET_NAME}"...`);
     
     const { data: buckets, error } = await supabase.storage.listBuckets();
     
@@ -58,7 +76,7 @@ async function crearBucketSiNoExiste() {
     const bucketExiste = buckets?.some(b => b.name === BUCKET_NAME);
     
     if (!bucketExiste) {
-      console.log(`📁 Creando bucket "${BUCKET_NAME}"...`);
+      console.log(`Creando bucket "${BUCKET_NAME}"...`);
       const { error: createError } = await supabase.storage.createBucket(
         BUCKET_NAME,
         {
@@ -69,12 +87,12 @@ async function crearBucketSiNoExiste() {
       );
       
       if (createError) {
-        console.error('❌ Error al crear bucket:', createError);
+        console.error('Error al crear bucket:', createError);
       } else {
-        console.log(`✅ Bucket "${BUCKET_NAME}" creado correctamente`);
+        console.log(`Bucket "${BUCKET_NAME}" creado correctamente`);
       }
     } else {
-      console.log(`✅ Bucket "${BUCKET_NAME}" ya existe`);
+      console.log(`Bucket "${BUCKET_NAME}" ya existe`);
     }
   } catch (error) {
     console.error('Error en crearBucketSiNoExiste:', error);
@@ -95,35 +113,21 @@ function extraerUsuarioId(req) {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader) {
-      console.log('⚠️ No hay token de autenticación');
       return null;
     }
 
     const token = authHeader.split(' ')[1];
     if (!token) {
-      console.log('⚠️ Token no encontrado en el header');
       return null;
     }
-
-    console.log('🔑 Token recibido, verificando...');
 
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      console.log('✅ Token verificado correctamente');
-      console.log('👤 Usuario ID:', decoded.id);
-      console.log('📧 Email:', decoded.email);
       return decoded.id;
     } catch (verifyError) {
-      console.error('❌ Error verificando token:', verifyError.message);
-      if (verifyError.name === 'TokenExpiredError') {
-        console.error('⚠️ El token ha expirado');
-      } else if (verifyError.name === 'JsonWebTokenError') {
-        console.error('⚠️ Token inválido - ¿Está usando el mismo JWT_SECRET?');
-      }
       return null;
     }
   } catch (error) {
-    console.error('❌ Error extrayendo usuario:', error.message);
     return null;
   }
 }
@@ -276,18 +280,11 @@ app.get('/documentos/:id/descargar', async (req, res) => {
 // POST /documentos/upload - Subir documento
 app.post('/documentos/upload', upload.single('file'), async (req, res) => {
   try {
-    console.log('📤 Recibiendo solicitud de subida...');
-    
     const file = req.file;
     const { nombre, categoria, descripcion } = req.body;
     const usuarioId = extraerUsuarioId(req);
     
-    console.log('👤 Usuario ID:', usuarioId);
-    console.log('📄 Nombre:', nombre);
-    console.log('📁 Categoría:', categoria);
-    
     if (!usuarioId) {
-      console.log('❌ Usuario no autenticado');
       return res.status(401).json({
         success: false,
         error: 'Usuario no autenticado. Token inválido o expirado.'
@@ -295,7 +292,6 @@ app.post('/documentos/upload', upload.single('file'), async (req, res) => {
     }
 
     if (!file) {
-      console.log('❌ No hay archivo');
       return res.status(400).json({
         success: false,
         error: 'No se ha subido ningún archivo'
@@ -303,7 +299,6 @@ app.post('/documentos/upload', upload.single('file'), async (req, res) => {
     }
 
     if (!nombre) {
-      console.log('❌ No hay nombre');
       return res.status(400).json({
         success: false,
         error: 'El nombre del documento es requerido'
@@ -313,7 +308,6 @@ app.post('/documentos/upload', upload.single('file'), async (req, res) => {
     const fileName = `${Date.now()}_${file.originalname}`;
 
     // Subir archivo a Supabase Storage
-    console.log('📤 Subiendo archivo a Storage...');
     const { data: uploadData, error: uploadError } = await supabase.storage
       .from(BUCKET_NAME)
       .upload(fileName, file.buffer, {
@@ -323,23 +317,20 @@ app.post('/documentos/upload', upload.single('file'), async (req, res) => {
       });
 
     if (uploadError) {
-      console.error('❌ Error al subir archivo:', uploadError);
+      console.error('Error al subir archivo:', uploadError);
       return res.status(500).json({
         success: false,
         error: 'Error al subir el archivo: ' + uploadError.message
       });
     }
-    console.log('✅ Archivo subido a Storage');
 
     // Obtener URL pública
     const { data: urlData } = supabase.storage
       .from(BUCKET_NAME)
       .getPublicUrl(fileName);
     const publicUrl = urlData.publicUrl;
-    console.log('🔗 URL pública:', publicUrl);
 
     // Guardar metadata en la base de datos
-    console.log('💾 Guardando en base de datos...');
     const { data: documento, error: dbError } = await supabase
       .from('documentos')
       .insert({
@@ -356,7 +347,7 @@ app.post('/documentos/upload', upload.single('file'), async (req, res) => {
       .single();
 
     if (dbError) {
-      console.error('❌ Error al guardar metadata:', dbError);
+      console.error('Error al guardar metadata:', dbError);
       // Intentar eliminar el archivo subido
       await supabase.storage.from(BUCKET_NAME).remove([fileName]);
       return res.status(500).json({
@@ -364,7 +355,6 @@ app.post('/documentos/upload', upload.single('file'), async (req, res) => {
         error: 'Error al guardar la información del documento: ' + dbError.message
       });
     }
-    console.log('✅ Documento guardado en base de datos');
 
     res.json({
       success: true,
@@ -376,7 +366,7 @@ app.post('/documentos/upload', upload.single('file'), async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Error en POST /documentos/upload:', error);
+    console.error('Error en POST /documentos/upload:', error);
     res.status(500).json({
       success: false,
       error: 'Error interno del servidor: ' + error.message
@@ -451,11 +441,10 @@ app.delete('/documentos/:id', async (req, res) => {
 
 // ==================== INICIAR SERVIDOR ====================
 app.listen(PORT, () => {
-  console.log(`✅ Documentos service running on port ${PORT}`);
-  console.log(`📁 Bucket: ${BUCKET_NAME}`);
-  console.log(`🔑 JWT_SECRET: ${process.env.JWT_SECRET ? '✅ Configurado' : '❌ Faltante'}`);
-  console.log(`🔑 Health check: http://localhost:${PORT}/health`);
-  console.log(`📄 Documentos: http://localhost:${PORT}/documentos`);
+  console.log(`Documentos service running on port ${PORT}`);
+  console.log(`Bucket: ${BUCKET_NAME}`);
+  console.log(`CORS permitido para: ${frontendUrl}`);
+  console.log(`Health check: http://localhost:${PORT}/health`);
 });
 
 module.exports = app;
