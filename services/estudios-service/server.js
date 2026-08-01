@@ -8,18 +8,36 @@ require('dotenv').config({ path: path.join(__dirname, '../../.env') });
 const app = express();
 const PORT = process.env.ESTUDIOS_SERVICE_PORT || 3004;
 
-// ==================== CORS ====================
-const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:4200')
-  .split(',')
-  .map(o => o.trim())
-  .filter(Boolean);
+// ==================== CORS CONFIGURACIÓN CORREGIDA ====================
+// Limpiar la URL de la barra al final
+const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:4200').replace(/\/$/, '');
+const allowedOrigins = [frontendUrl, frontendUrl + '/'];
 
-app.use(cors({
-  origin: allowedOrigins,
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+console.log(`CORS permitido para: ${frontendUrl}`);
+
+// Middleware CORS manual
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  
+  // Verificar si el origen está permitido (con o sin barra)
+  if (origin && (origin === frontendUrl || origin === frontendUrl + '/')) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else if (origin && allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
+  
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Max-Age', '86400');
+  
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  
+  next();
+});
+
 app.use(express.json());
 
 // ==================== VERIFY TOKEN ====================
@@ -33,7 +51,7 @@ const verifyToken = (req, res, next) => {
     req.usuario_id = decoded.id;
     next();
   } catch (error) {
-    console.error('❌ Error al verificar token:', error.message);
+    console.error('Error al verificar token:', error.message);
     res.status(401).json({ success: false, error: 'Token inválido' });
   }
 };
@@ -46,8 +64,6 @@ app.get('/estudios/health', (req, res) => {
 // ==================== GET ESTUDIOS ====================
 app.get('/estudios', verifyToken, async (req, res) => {
   try {
-    console.log('👤 Usuario ID desde token:', req.usuario_id);
-
     const { data, error } = await supabase
       .from('estudios')
       .select('*')
@@ -68,7 +84,7 @@ app.get('/estudios', verifyToken, async (req, res) => {
       data: transformedData
     });
   } catch (error) {
-    console.error('❌ Error en GET /estudios:', error);
+    console.error('Error en GET /estudios:', error);
     res.status(500).json({
       success: false,
       error: error.message || 'Error al obtener los estudios'
@@ -118,7 +134,7 @@ app.post('/estudios', verifyToken, async (req, res) => {
       message: 'Estudio registrado correctamente'
     });
   } catch (error) {
-    console.error('❌ Error en POST /estudios:', error);
+    console.error('Error en POST /estudios:', error);
     res.status(500).json({
       success: false,
       error: error.message || 'Error al registrar el estudio'
@@ -159,7 +175,7 @@ app.get('/estudios/:id', verifyToken, async (req, res) => {
       data: responseData
     });
   } catch (error) {
-    console.error('❌ Error en GET /estudios/:id:', error);
+    console.error('Error en GET /estudios/:id:', error);
     res.status(500).json({
       success: false,
       error: error.message || 'Error al obtener el estudio'
@@ -220,7 +236,7 @@ app.put('/estudios/:id', verifyToken, async (req, res) => {
       message: 'Estudio actualizado correctamente'
     });
   } catch (error) {
-    console.error('❌ Error en PUT /estudios/:id:', error);
+    console.error('Error en PUT /estudios/:id:', error);
     res.status(500).json({
       success: false,
       error: error.message || 'Error al actualizar el estudio'
@@ -279,7 +295,7 @@ app.patch('/estudios/:id/estado', verifyToken, async (req, res) => {
       message: `Estudio ${estado} correctamente`
     });
   } catch (error) {
-    console.error('❌ Error en PATCH /estudios/:id/estado:', error);
+    console.error('Error en PATCH /estudios/:id/estado:', error);
     res.status(500).json({
       success: false,
       error: error.message || 'Error al cambiar el estado del estudio'
@@ -319,7 +335,7 @@ app.get('/estudios/fecha/:fecha', verifyToken, async (req, res) => {
       data: transformedData
     });
   } catch (error) {
-    console.error('❌ Error en GET /estudios/fecha/:fecha:', error);
+    console.error('Error en GET /estudios/fecha/:fecha:', error);
     res.status(500).json({
       success: false,
       error: error.message || 'Error al obtener los estudios por fecha'
@@ -359,7 +375,7 @@ app.get('/estudios/tipo/:tipo', verifyToken, async (req, res) => {
       data: transformedData
     });
   } catch (error) {
-    console.error('❌ Error en GET /estudios/tipo/:tipo:', error);
+    console.error('Error en GET /estudios/tipo/:tipo:', error);
     res.status(500).json({
       success: false,
       error: error.message || 'Error al obtener los estudios por tipo'
@@ -369,5 +385,6 @@ app.get('/estudios/tipo/:tipo', verifyToken, async (req, res) => {
 
 // ==================== START SERVER ====================
 app.listen(PORT, () => {
-  console.log(`✅ Estudios Service running on port ${PORT}`);
+  console.log(`Estudios Service running on port ${PORT}`);
+  console.log(`CORS permitido para: ${frontendUrl}`);
 });
