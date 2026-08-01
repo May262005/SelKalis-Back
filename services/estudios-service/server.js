@@ -8,8 +8,18 @@ require('dotenv').config({ path: path.join(__dirname, '../../.env') });
 const app = express();
 const PORT = process.env.ESTUDIOS_SERVICE_PORT || 3004;
 
-// ==================== MIDDLEWARES ====================
-app.use(cors());
+// ==================== CORS ====================
+const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:4200')
+  .split(',')
+  .map(o => o.trim())
+  .filter(Boolean);
+
+app.use(cors({
+  origin: allowedOrigins,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(express.json());
 
 // ==================== VERIFY TOKEN ====================

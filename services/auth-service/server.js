@@ -43,12 +43,13 @@ const app = express();
 const PORT = process.env.USER_SERVICE_PORT || 3001;
 
 // ==================== CORS ====================
+const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:4200')
+  .split(',')
+  .map(o => o.trim())
+  .filter(Boolean);
+
 app.use(cors({
-  origin: [
-    'http://localhost:4200',
-    'http://localhost:3000',
-    'https://selkalis-frontend.onrender.com',
-  ],
+  origin: allowedOrigins,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
