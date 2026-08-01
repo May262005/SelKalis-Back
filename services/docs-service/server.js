@@ -54,7 +54,8 @@ const upload = multer({
   storage: storage,
   limits: {
     fileSize: 50 * 1024 * 1024, // 50MB
-    fieldSize: 50 * 1024 * 1024
+    fieldSize: 50 * 1024 * 1024,
+    files: 1 // Solo permitir un archivo
   }
 });
 
@@ -141,9 +142,13 @@ function extraerUsuarioId(req) {
   }
 }
 
-// ==================== MIDDLEWARE DE MANEJO DE ERRORES AMIGABLE ====================
+// ==================== MIDDLEWARE DE MANEJO DE ERRORES DE MULTER ====================
 app.use((err, req, res, next) => {
+  console.error('Error detallado:', err);
+  
   if (err instanceof multer.MulterError) {
+    console.error('Código de error Multer:', err.code);
+    
     if (err.code === 'FILE_TOO_LARGE') {
       return res.status(413).json({
         success: false,
@@ -156,16 +161,22 @@ app.use((err, req, res, next) => {
         error: 'El archivo supera el límite de 50 MB. Por favor, reduce el tamaño del archivo.'
       });
     }
-    if (err.code === 'LIMIT_PART_COUNT') {
+    if (err.code === 'LIMIT_UNEXPECTED_FILE') {
       return res.status(400).json({
         success: false,
-        error: 'El archivo tiene demasiadas partes. Por favor, intenta con un archivo más simple.'
+        error: 'El campo del archivo debe llamarse "file". Por favor, verifica que estás enviando el archivo correctamente.'
       });
     }
     if (err.code === 'LIMIT_FIELD_COUNT') {
       return res.status(400).json({
         success: false,
-        error: 'Se enviaron demasiados campos. Por favor, verifica la información.'
+        error: 'Se enviaron demasiados campos. Por favor, verifica la información que estás enviando.'
+      });
+    }
+    if (err.code === 'LIMIT_PART_COUNT') {
+      return res.status(400).json({
+        success: false,
+        error: 'El archivo tiene demasiadas partes. Por favor, intenta con un archivo más simple.'
       });
     }
     return res.status(400).json({
@@ -322,11 +333,37 @@ app.get('/documentos/:id/descargar', async (req, res) => {
 });
 
 // POST /documentos/upload - Subir documento
-app.post('/documentos/upload', upload.single('file'), async (req, res) => {
+app.post('/documentos/upload', (req, res, next) => {
+  console.log('📤 Recibiendo solicitud de upload');
+  console.log('📋 Headers:', req.headers);
+  console.log('📋 Content-Type:', req.headers['content-type']);
+  
+  // Verificar que el Content-Type sea multipart/form-data
+  const contentType = req.headers['content-type'] || '';
+  if (!contentType.includes('multipart/form-data')) {
+    return res.status(400).json({
+      success: false,
+      error: 'El formato de la solicitud no es válido. Asegúrate de enviar el archivo como "form-data".'
+    });
+  }
+  
+  next();
+}, upload.single('file'), async (req, res) => {
   try {
+    console.log('✅ Archivo recibido correctamente');
+    
     const file = req.file;
     const { nombre, categoria, descripcion } = req.body;
     const usuarioId = extraerUsuarioId(req);
+    
+    console.log('📄 Datos recibidos:', { 
+      nombre, 
+      categoria, 
+      descripcion, 
+      fileSize: file?.size,
+      fileMime: file?.mimetype,
+      usuarioId 
+    });
     
     if (!usuarioId) {
       return res.status(401).json({
@@ -342,18 +379,37 @@ app.post('/documentos/upload', upload.single('file'), async (req, res) => {
       });
     }
 
-    if (!nombre) {
+    if (!nombre || nombre.trim() === '') {
       return res.status(400).json({
         success: false,
         error: 'Por favor, escribe un nombre para el documento para poder identificarlo fácilmente.'
       });
     }
 
-    // Validar tamaño del archivo (mensaje adicional)
+    // Validar tamaño del archivo
     if (file.size > 50 * 1024 * 1024) {
       return res.status(413).json({
         success: false,
         error: `El archivo pesa ${formatearTamano(file.size)} y el límite máximo es de 50 MB. Por favor, comprime el archivo o elige uno más pequeño.`
+      });
+    }
+
+    // Validar tipo de archivo
+    const tiposPermitidos = [
+      'image/jpeg', 'image/png', 'image/gif', 'image/webp',
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'text/plain',
+      'application/zip'
+    ];
+
+    if (!tiposPermitidos.includes(file.mimetype)) {
+      return res.status(400).json({
+        success: false,
+        error: `El tipo de archivo "${file.mimetype}" no está permitido. Por favor, sube imágenes, PDF, Word, Excel o documentos de texto.`
       });
     }
 
@@ -371,23 +427,16 @@ app.post('/documentos/upload', upload.single('file'), async (req, res) => {
     if (uploadError) {
       console.error('Error al subir archivo:', uploadError);
       
-      if (uploadError.message.includes('duplicate')) {
+      if (uploadError.message && uploadError.message.includes('duplicate')) {
         return res.status(400).json({
           success: false,
-          error: 'Ya existe un archivo con este nombre. Por favor, cambia el nombre del archivo.'
-        });
-      }
-      
-      if (uploadError.message.includes('permission')) {
-        return res.status(403).json({
-          success: false,
-          error: 'No tenemos permiso para subir archivos en este momento. Por favor, contacta a soporte.'
+          error: 'Ya existe un archivo con este nombre. Por favor, cambia el nombre del archivo antes de subirlo.'
         });
       }
       
       return res.status(500).json({
         success: false,
-        error: 'No pudimos subir tu archivo. Por favor, intenta de nuevo más tarde.'
+        error: 'No pudimos subir tu archivo en este momento. Por favor, intenta de nuevo más tarde.'
       });
     }
 
@@ -401,7 +450,7 @@ app.post('/documentos/upload', upload.single('file'), async (req, res) => {
     const { data: documento, error: dbError } = await supabase
       .from('documentos')
       .insert({
-        nombre: nombre,
+        nombre: nombre.trim(),
         tipo: file.mimetype,
         tamano: file.size,
         categoria: categoria || 'otro',
