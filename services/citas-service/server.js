@@ -8,19 +8,36 @@ require('dotenv').config({ path: path.join(__dirname, '../../.env') });
 const app = express();
 const PORT = process.env.CITAS_SERVICE_PORT || 3003;
 
-// ==================== MIDDLEWARES ====================
-// ==================== CORS ====================
-const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:4200')
-  .split(',')
-  .map(o => o.trim())
-  .filter(Boolean);
+// ==================== CORS CONFIGURACIÓN CORREGIDA ====================
+// Limpiar la URL de la barra al final
+const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:4200').replace(/\/$/, '');
+const allowedOrigins = [frontendUrl, frontendUrl + '/'];
 
-app.use(cors({
-  origin: allowedOrigins,
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+console.log(`CORS permitido para: ${frontendUrl}`);
+
+// Middleware CORS manual
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  
+  // Verificar si el origen está permitido (con o sin barra)
+  if (origin && (origin === frontendUrl || origin === frontendUrl + '/')) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else if (origin && allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
+  
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, X-Timezone');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Max-Age', '86400');
+  
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  
+  next();
+});
+
 app.use(express.json());
 
 const verifyToken = (req, res, next) => {
@@ -86,7 +103,7 @@ app.get('/citas', verifyToken, async (req, res) => {
 
     res.json({ success: true, data: citasConEstado });
   } catch (error) {
-    console.error('❌ Error en GET /citas:', error);
+    console.error('Error en GET /citas:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -148,7 +165,7 @@ app.post('/citas', verifyToken, async (req, res) => {
     if (error) throw error;
     res.json({ success: true, data });
   } catch (error) {
-    console.error('❌ Error en POST /citas:', error);
+    console.error('Error en POST /citas:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -194,7 +211,7 @@ app.put('/citas/:id', verifyToken, async (req, res) => {
     if (error) throw error;
     res.json({ success: true, data });
   } catch (error) {
-    console.error('❌ Error en PUT /citas/:id:', error);
+    console.error('Error en PUT /citas/:id:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -225,7 +242,7 @@ app.patch('/citas/:id/estado', verifyToken, async (req, res) => {
     if (error) throw error;
     res.json({ success: true, data });
   } catch (error) {
-    console.error('❌ Error en PATCH /citas/:id/estado:', error);
+    console.error('Error en PATCH /citas/:id/estado:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -242,7 +259,7 @@ app.delete('/citas/:id', verifyToken, async (req, res) => {
     if (error) throw error;
     res.json({ success: true });
   } catch (error) {
-    console.error('❌ Error en DELETE /citas/:id:', error);
+    console.error('Error en DELETE /citas/:id:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -277,12 +294,13 @@ app.get('/citas/mes/:mes/:anio', verifyToken, async (req, res) => {
     if (error) throw error;
     res.json({ success: true, data });
   } catch (error) {
-    console.error('❌ Error en GET /citas/mes/:mes/:anio:', error);
+    console.error('Error en GET /citas/mes/:mes/:anio:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
 // ==================== START SERVER ====================
 app.listen(PORT, () => {
-  console.log(`✅ Citas Service running on port ${PORT}`);
+  console.log(`Citas Service running on port ${PORT}`);
+  console.log(`CORS permitido para: ${frontendUrl}`);
 });
