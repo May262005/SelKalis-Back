@@ -44,8 +44,24 @@ app.use((req, res, next) => {
 });
 
 // ==================== LIMITES ====================
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+// Se excluye explicitamente la ruta de upload para que estos parsers
+// nunca intenten leer un body multipart/form-data como JSON.
+const jsonParser = express.json({ limit: '50mb' });
+const urlencodedParser = express.urlencoded({ limit: '50mb', extended: true });
+
+app.use((req, res, next) => {
+  if (req.path === '/documentos/upload') {
+    return next();
+  }
+  jsonParser(req, res, next);
+});
+
+app.use((req, res, next) => {
+  if (req.path === '/documentos/upload') {
+    return next();
+  }
+  urlencodedParser(req, res, next);
+});
 
 // ==================== MULTER ====================
 const storage = multer.memoryStorage();
@@ -344,14 +360,7 @@ app.post('/documentos/upload', (req, res, next) => {
     });
 
   } catch (error) {
-    // DEBUG TEMPORAL: esto expone el mensaje real del error en el toast.
-    // Quitar este bloque y volver a next(error) una vez identificado el problema.
-    console.error('Error capturado en upload:', error.message);
-    console.error('Stack:', error.stack);
-    return res.status(500).json({
-      success: false,
-      error: `DEBUG: ${error.message}`
-    });
+    next(error);
   }
 });
 
@@ -530,6 +539,13 @@ app.use((err, req, res, next) => {
     return res.status(413).json({
       success: false,
       error: 'El archivo o los datos enviados son demasiado grandes.'
+    });
+  }
+
+  if (err.type === 'entity.parse.failed') {
+    return res.status(400).json({
+      success: false,
+      error: 'El formato de la solicitud no es correcto. Intenta de nuevo.'
     });
   }
 
