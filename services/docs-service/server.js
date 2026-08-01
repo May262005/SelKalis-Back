@@ -13,7 +13,6 @@ const PORT = process.env.DOCUMENTOS_PORT || 3005;
 // ==================== VALIDACIÓN DE VARIABLES ====================
 if (!process.env.JWT_SECRET) {
   console.error('ERROR: JWT_SECRET no está definido en .env');
-  console.error('El servicio de documentos necesita el mismo JWT_SECRET que auth-service');
   process.exit(1);
 }
 
@@ -53,9 +52,9 @@ const storage = multer.memoryStorage();
 const upload = multer({
   storage: storage,
   limits: {
-    fileSize: 50 * 1024 * 1024, // 50MB
+    fileSize: 50 * 1024 * 1024,
     fieldSize: 50 * 1024 * 1024,
-    files: 1 // Solo permitir un archivo
+    files: 1
   }
 });
 
@@ -89,9 +88,7 @@ async function crearBucketSiNoExiste() {
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             'application/vnd.ms-excel',
             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'text/plain',
-            'application/zip',
-            'application/x-zip-compressed'
+            'text/plain'
           ]
         }
       );
@@ -142,46 +139,26 @@ function extraerUsuarioId(req) {
   }
 }
 
-// ==================== MIDDLEWARE DE MANEJO DE ERRORES DE MULTER ====================
+// ==================== MIDDLEWARE DE MANEJO DE ERRORES ====================
 app.use((err, req, res, next) => {
-  console.error('Error detallado:', err);
+  console.error('Error capturado:', err);
   
   if (err instanceof multer.MulterError) {
-    console.error('Código de error Multer:', err.code);
-    
     if (err.code === 'FILE_TOO_LARGE') {
       return res.status(413).json({
         success: false,
-        error: 'El archivo es demasiado grande. El tamaño máximo permitido es de 50 MB. Por favor, comprime el archivo o elige uno más pequeño.'
-      });
-    }
-    if (err.code === 'LIMIT_FILE_SIZE') {
-      return res.status(413).json({
-        success: false,
-        error: 'El archivo supera el límite de 50 MB. Por favor, reduce el tamaño del archivo.'
+        error: 'El archivo es demasiado grande. El tamaño máximo permitido es de 50 MB.'
       });
     }
     if (err.code === 'LIMIT_UNEXPECTED_FILE') {
       return res.status(400).json({
         success: false,
-        error: 'El campo del archivo debe llamarse "file". Por favor, verifica que estás enviando el archivo correctamente.'
-      });
-    }
-    if (err.code === 'LIMIT_FIELD_COUNT') {
-      return res.status(400).json({
-        success: false,
-        error: 'Se enviaron demasiados campos. Por favor, verifica la información que estás enviando.'
-      });
-    }
-    if (err.code === 'LIMIT_PART_COUNT') {
-      return res.status(400).json({
-        success: false,
-        error: 'El archivo tiene demasiadas partes. Por favor, intenta con un archivo más simple.'
+        error: 'El campo del archivo debe llamarse "file". Verifica que estás enviando el archivo correctamente.'
       });
     }
     return res.status(400).json({
       success: false,
-      error: `Error al subir el archivo: ${err.message}. Por favor, intenta nuevamente.`
+      error: `Error al subir el archivo: ${err.message}`
     });
   }
   next(err);
@@ -194,8 +171,7 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'OK',
     service: 'documentos-service',
-    timestamp: new Date().toISOString(),
-    jwt_configured: !!process.env.JWT_SECRET
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -207,7 +183,7 @@ app.get('/documentos', async (req, res) => {
     if (!usuarioId) {
       return res.status(401).json({
         success: false,
-        error: 'Para ver tus documentos, primero debes iniciar sesión. Por favor, inicia sesión y vuelve a intentarlo.'
+        error: 'Debes iniciar sesión para ver tus documentos.'
       });
     }
 
@@ -229,7 +205,7 @@ app.get('/documentos', async (req, res) => {
       console.error('Error al obtener documentos:', error);
       return res.status(500).json({
         success: false,
-        error: 'Lo sentimos, no pudimos cargar tus documentos. Por favor, intenta de nuevo más tarde.'
+        error: 'No pudimos cargar tus documentos. Intenta de nuevo más tarde.'
       });
     }
 
@@ -245,7 +221,7 @@ app.get('/documentos', async (req, res) => {
     console.error('Error en GET /documentos:', error);
     res.status(500).json({
       success: false,
-      error: 'Ocurrió un error inesperado al cargar tus documentos. Por favor, recarga la página e intenta de nuevo.'
+      error: 'Ocurrió un error al cargar tus documentos.'
     });
   }
 });
@@ -259,7 +235,7 @@ app.get('/documentos/:id', async (req, res) => {
     if (!usuarioId) {
       return res.status(401).json({
         success: false,
-        error: 'Para ver este documento, primero debes iniciar sesión.'
+        error: 'Debes iniciar sesión para ver este documento.'
       });
     }
 
@@ -273,7 +249,7 @@ app.get('/documentos/:id', async (req, res) => {
     if (error || !data) {
       return res.status(404).json({
         success: false,
-        error: 'No encontramos el documento que buscas. Es posible que haya sido eliminado o no tengas permiso para verlo.'
+        error: 'No encontramos el documento que buscas.'
       });
     }
 
@@ -289,7 +265,7 @@ app.get('/documentos/:id', async (req, res) => {
     console.error('Error en GET /documentos/:id:', error);
     res.status(500).json({
       success: false,
-      error: 'Ocurrió un error al cargar el documento. Por favor, intenta de nuevo.'
+      error: 'Error al cargar el documento.'
     });
   }
 });
@@ -303,7 +279,7 @@ app.get('/documentos/:id/descargar', async (req, res) => {
     if (!usuarioId) {
       return res.status(401).json({
         success: false,
-        error: 'Para descargar este documento, primero debes iniciar sesión.'
+        error: 'Debes iniciar sesión para descargar este documento.'
       });
     }
 
@@ -317,7 +293,7 @@ app.get('/documentos/:id/descargar', async (req, res) => {
     if (error || !data) {
       return res.status(404).json({
         success: false,
-        error: 'No pudimos encontrar el documento para descargar. Es posible que ya no esté disponible.'
+        error: 'No encontramos el documento para descargar.'
       });
     }
 
@@ -327,74 +303,48 @@ app.get('/documentos/:id/descargar', async (req, res) => {
     console.error('Error en GET /documentos/:id/descargar:', error);
     res.status(500).json({
       success: false,
-      error: 'Ocurrió un error al intentar descargar el documento. Por favor, intenta de nuevo más tarde.'
+      error: 'Error al descargar el documento.'
     });
   }
 });
 
 // POST /documentos/upload - Subir documento
-app.post('/documentos/upload', (req, res, next) => {
-  console.log('📤 Recibiendo solicitud de upload');
-  console.log('📋 Headers:', req.headers);
-  console.log('📋 Content-Type:', req.headers['content-type']);
-  
-  // Verificar que el Content-Type sea multipart/form-data
-  const contentType = req.headers['content-type'] || '';
-  if (!contentType.includes('multipart/form-data')) {
-    return res.status(400).json({
-      success: false,
-      error: 'El formato de la solicitud no es válido. Asegúrate de enviar el archivo como "form-data".'
-    });
-  }
-  
-  next();
-}, upload.single('file'), async (req, res) => {
+app.post('/documentos/upload', upload.single('file'), async (req, res) => {
   try {
-    console.log('✅ Archivo recibido correctamente');
-    
     const file = req.file;
     const { nombre, categoria, descripcion } = req.body;
     const usuarioId = extraerUsuarioId(req);
     
-    console.log('📄 Datos recibidos:', { 
-      nombre, 
-      categoria, 
-      descripcion, 
-      fileSize: file?.size,
-      fileMime: file?.mimetype,
-      usuarioId 
-    });
-    
     if (!usuarioId) {
       return res.status(401).json({
         success: false,
-        error: 'Para subir documentos, primero debes iniciar sesión. Por favor, inicia sesión y vuelve a intentarlo.'
+        error: 'Debes iniciar sesión para subir documentos.'
       });
     }
 
     if (!file) {
       return res.status(400).json({
         success: false,
-        error: 'No seleccionaste ningún archivo. Por favor, elige un archivo para subir.'
+        error: 'Selecciona un archivo para subir.'
       });
     }
 
     if (!nombre || nombre.trim() === '') {
       return res.status(400).json({
         success: false,
-        error: 'Por favor, escribe un nombre para el documento para poder identificarlo fácilmente.'
+        error: 'Escribe un nombre para el documento.'
       });
     }
 
-    // Validar tamaño del archivo
+    // Validar tamaño
     if (file.size > 50 * 1024 * 1024) {
       return res.status(413).json({
         success: false,
-        error: `El archivo pesa ${formatearTamano(file.size)} y el límite máximo es de 50 MB. Por favor, comprime el archivo o elige uno más pequeño.`
+        error: `El archivo pesa ${formatearTamano(file.size)}. El límite máximo es 50 MB.`
       });
     }
 
-    // Validar tipo de archivo
+    // Validar tipo
     const tiposPermitidos = [
       'image/jpeg', 'image/png', 'image/gif', 'image/webp',
       'application/pdf',
@@ -402,20 +352,19 @@ app.post('/documentos/upload', (req, res, next) => {
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       'application/vnd.ms-excel',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'text/plain',
-      'application/zip'
+      'text/plain'
     ];
 
     if (!tiposPermitidos.includes(file.mimetype)) {
       return res.status(400).json({
         success: false,
-        error: `El tipo de archivo "${file.mimetype}" no está permitido. Por favor, sube imágenes, PDF, Word, Excel o documentos de texto.`
+        error: `El tipo de archivo "${file.mimetype}" no está permitido. Sube imágenes, PDF, Word, Excel o texto.`
       });
     }
 
     const fileName = `${Date.now()}_${file.originalname}`;
 
-    // Subir archivo a Supabase Storage
+    // Subir a Supabase
     const { data: uploadData, error: uploadError } = await supabase.storage
       .from(BUCKET_NAME)
       .upload(fileName, file.buffer, {
@@ -426,17 +375,9 @@ app.post('/documentos/upload', (req, res, next) => {
 
     if (uploadError) {
       console.error('Error al subir archivo:', uploadError);
-      
-      if (uploadError.message && uploadError.message.includes('duplicate')) {
-        return res.status(400).json({
-          success: false,
-          error: 'Ya existe un archivo con este nombre. Por favor, cambia el nombre del archivo antes de subirlo.'
-        });
-      }
-      
       return res.status(500).json({
         success: false,
-        error: 'No pudimos subir tu archivo en este momento. Por favor, intenta de nuevo más tarde.'
+        error: 'No pudimos subir tu archivo. Intenta de nuevo.'
       });
     }
 
@@ -446,7 +387,7 @@ app.post('/documentos/upload', (req, res, next) => {
       .getPublicUrl(fileName);
     const publicUrl = urlData.publicUrl;
 
-    // Guardar metadata en la base de datos
+    // Guardar metadata
     const { data: documento, error: dbError } = await supabase
       .from('documentos')
       .insert({
@@ -464,11 +405,10 @@ app.post('/documentos/upload', (req, res, next) => {
 
     if (dbError) {
       console.error('Error al guardar metadata:', dbError);
-      // Intentar eliminar el archivo subido
       await supabase.storage.from(BUCKET_NAME).remove([fileName]);
       return res.status(500).json({
         success: false,
-        error: 'El archivo se subió pero no pudimos guardar la información. Por favor, intenta de nuevo.'
+        error: 'El archivo se subió pero no pudimos guardar la información.'
       });
     }
 
@@ -485,7 +425,7 @@ app.post('/documentos/upload', (req, res, next) => {
     console.error('Error en POST /documentos/upload:', error);
     res.status(500).json({
       success: false,
-      error: 'Ocurrió un error inesperado al subir el archivo. Por favor, intenta de nuevo.'
+      error: 'Error al subir el archivo. Intenta de nuevo.'
     });
   }
 });
@@ -499,11 +439,10 @@ app.delete('/documentos/:id', async (req, res) => {
     if (!usuarioId) {
       return res.status(401).json({
         success: false,
-        error: 'Para eliminar documentos, primero debes iniciar sesión.'
+        error: 'Debes iniciar sesión para eliminar documentos.'
       });
     }
 
-    // Obtener el documento primero para saber el nombre del archivo
     const { data: documento, error: findError } = await supabase
       .from('documentos')
       .select('url, nombre')
@@ -514,19 +453,16 @@ app.delete('/documentos/:id', async (req, res) => {
     if (findError || !documento) {
       return res.status(404).json({
         success: false,
-        error: 'No encontramos el documento que quieres eliminar. Es posible que ya haya sido eliminado.'
+        error: 'No encontramos el documento que quieres eliminar.'
       });
     }
 
-    // Extraer el nombre del archivo de la URL
     const fileName = documento.url.split('/').pop();
 
-    // Eliminar el archivo de Storage
     if (fileName) {
       await supabase.storage.from(BUCKET_NAME).remove([fileName]);
     }
 
-    // Eliminar el registro de la base de datos
     const { error: deleteError } = await supabase
       .from('documentos')
       .delete()
@@ -537,20 +473,20 @@ app.delete('/documentos/:id', async (req, res) => {
       console.error('Error al eliminar documento:', deleteError);
       return res.status(500).json({
         success: false,
-        error: 'No pudimos eliminar el documento. Por favor, intenta de nuevo más tarde.'
+        error: 'No pudimos eliminar el documento.'
       });
     }
 
     res.json({
       success: true,
-      message: `El documento "${documento.nombre}" se eliminó correctamente.`
+      message: `"${documento.nombre}" eliminado correctamente.`
     });
 
   } catch (error) {
     console.error('Error en DELETE /documentos/:id:', error);
     res.status(500).json({
       success: false,
-      error: 'Ocurrió un error al eliminar el documento. Por favor, intenta de nuevo.'
+      error: 'Error al eliminar el documento.'
     });
   }
 });
@@ -560,8 +496,7 @@ app.listen(PORT, () => {
   console.log(`Documentos service running on port ${PORT}`);
   console.log(`Bucket: ${BUCKET_NAME}`);
   console.log(`CORS permitido para: ${frontendUrl}`);
-  console.log(`Health check: http://localhost:${PORT}/health`);
-  console.log(`Tamaño máximo de archivo: 50MB`);
+  console.log(`Tamaño máximo: 50MB`);
 });
 
 module.exports = app;
