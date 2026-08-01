@@ -344,8 +344,14 @@ app.post('/documentos/upload', (req, res, next) => {
     });
 
   } catch (error) {
-    // Se delega al manejador de errores general al final del archivo
-    next(error);
+    // DEBUG TEMPORAL: esto expone el mensaje real del error en el toast.
+    // Quitar este bloque y volver a next(error) una vez identificado el problema.
+    console.error('Error capturado en upload:', error.message);
+    console.error('Stack:', error.stack);
+    return res.status(500).json({
+      success: false,
+      error: `DEBUG: ${error.message}`
+    });
   }
 });
 
