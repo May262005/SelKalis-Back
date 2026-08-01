@@ -3,7 +3,7 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { createClient } = require('@supabase/supabase-js');
-const sgMail = require('@sendgrid/mail'); // ✅ SendGrid en lugar de nodemailer
+const sgMail = require('@sendgrid/mail');
 const path = require('path');
 
 require('dotenv').config({ path: path.join(__dirname, '../../.env') });
@@ -37,23 +37,30 @@ const supabase = createClient(
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 const FROM_EMAIL = process.env.EMAIL_USER || 'selkalis26@gmail.com';
 
-console.log('✅ SendGrid configurado correctamente');
-
 const app = express();
 const PORT = process.env.USER_SERVICE_PORT || 3001;
 
-// ==================== CORS ====================
-const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:4200')
-  .split(',')
-  .map(o => o.trim())
-  .filter(Boolean);
+// ==================== CORS CONFIGURACIÓN PARA PRODUCCIÓN ====================
+// Obtener orígenes permitidos desde variable de entorno
+const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:4200';
 
-app.use(cors({
-  origin: allowedOrigins,
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+// Configuración CORS manual para asegurar que funcione en Render
+app.use((req, res, next) => {
+  // Establecer los headers CORS
+  res.setHeader('Access-Control-Allow-Origin', frontendUrl);
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Max-Age', '86400'); // 24 horas cache para preflight
+  
+  // Manejar preflight requests
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  
+  next();
+});
+
 app.use(express.json());
 
 // ==================== FUNCIONES AUXILIARES ====================
@@ -64,24 +71,18 @@ function generarCodigo() {
 // ==================== FUNCIÓN DE ENVÍO DE CORREO CON SENDGRID ====================
 async function enviarCorreo(email, asunto, html) {
   try {
-    console.log(`📧 Intentando enviar correo a ${email} con SendGrid...`);
-    
     const msg = {
       to: email,
       from: FROM_EMAIL,
       subject: asunto,
       html: html,
-      text: html.replace(/<[^>]*>/g, '') // Versión texto plano
+      text: html.replace(/<[^>]*>/g, '')
     };
 
-    const response = await sgMail.send(msg);
-    console.log(`✅ Correo enviado a ${email} con SendGrid`);
+    await sgMail.send(msg);
     return true;
   } catch (error) {
-    console.error('❌ Error enviando correo con SendGrid:', error.message);
-    if (error.response) {
-      console.error('📄 Detalles del error:', error.response.body);
-    }
+    console.error('Error enviando correo con SendGrid:', error.message);
     return false;
   }
 }
@@ -334,7 +335,6 @@ app.post('/usuarios/login', async (req, res) => {
 // ==================== LOGOUT ====================
 app.post('/usuarios/logout', async (req, res) => {
   try {
-    console.log('📤 Logout exitoso');
     res.json({
       success: true,
       message: 'Sesión cerrada exitosamente'
@@ -354,8 +354,6 @@ app.post('/auth/recuperar', async (req, res) => {
       return res.status(400).json({ error: 'El correo electrónico es requerido' });
     }
 
-    console.log(`📧 Solicitud de recuperación para: ${email}`);
-
     const { data: user } = await supabase
       .from('usuarios')
       .select('id, email')
@@ -363,17 +361,13 @@ app.post('/auth/recuperar', async (req, res) => {
       .maybeSingle();
 
     if (!user) {
-      console.log(`❌ Usuario no encontrado: ${email}`);
       return res.status(404).json({
         success: false,
         error: 'No existe una cuenta con este correo electrónico'
       });
     }
 
-    console.log(`✅ Usuario encontrado: ${user.id}`);
-
     const codigo = generarCodigo();
-    console.log(`🔑 Código generado: ${codigo}`);
 
     const { error: insertError } = await supabase
       .from('recuperacion_codigos')
@@ -384,25 +378,21 @@ app.post('/auth/recuperar', async (req, res) => {
       });
 
     if (insertError) {
-      console.error('❌ Error guardando código:', insertError);
+      console.error('Error guardando código:', insertError);
       return res.status(500).json({
         success: false,
         error: 'Error al generar el código de verificación'
       });
     }
 
-    console.log('📤 Enviando correo...');
     const emailEnviado = await enviarCorreoRecuperacion(email, codigo);
 
     if (!emailEnviado) {
-      console.error('❌ Falló el envío del correo');
       return res.status(500).json({
         success: false,
         error: 'Error al enviar el correo electrónico. Intenta de nuevo.'
       });
     }
-
-    console.log(`✅ Código enviado a ${email}: ${codigo}`);
 
     res.json({
       success: true,
@@ -410,7 +400,7 @@ app.post('/auth/recuperar', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Error en recuperar:', error);
+    console.error('Error en recuperar:', error);
     res.status(500).json({ error: 'Error al procesar la solicitud' });
   }
 });
@@ -606,8 +596,6 @@ app.post('/auth/reenviar-codigo', async (req, res) => {
       });
     }
 
-    console.log(`Nuevo código para ${email}: ${codigo}`);
-
     res.json({
       success: true,
       message: 'Nuevo código enviado a tu correo electrónico'
@@ -724,10 +712,10 @@ app.post('/usuarios/cambiar-password', async (req, res) => {
 
 // ==================== INICIAR SERVIDOR ====================
 app.listen(PORT, () => {
-  console.log(`✅ Auth service running on port ${PORT}`);
-  console.log(`📧 Email configurado: ${FROM_EMAIL}`);
-  console.log(`🔑 Health check: http://localhost:${PORT}/health`);
-  console.log(`📧 Test email: http://localhost:${PORT}/test-email?email=tuemail@test.com`);
+  console.log(`Auth service running on port ${PORT}`);
+  console.log(`Email configurado: ${FROM_EMAIL}`);
+  console.log(`CORS permitido para: ${frontendUrl}`);
+  console.log(`Health check: http://localhost:${PORT}/health`);
 });
 
 module.exports = app;
