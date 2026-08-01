@@ -18,23 +18,23 @@ console.log(`CORS permitido para: ${frontendUrl}`);
 // Middleware CORS manual
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  
+
   // Verificar si el origen está permitido (con o sin barra)
   if (origin && (origin === frontendUrl || origin === frontendUrl + '/')) {
     res.setHeader('Access-Control-Allow-Origin', origin);
   } else if (origin && allowedOrigins.includes(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
   }
-  
+
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, X-Timezone');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Max-Age', '86400');
-  
+
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
-  
+
   next();
 });
 
@@ -88,6 +88,16 @@ function obtenerAhoraEnZona(timeZone) {
     fecha: `${parts.year}-${parts.month}-${parts.day}`,
     hora: `${hora24}:${parts.minute}`
   };
+}
+
+// Convierte una fecha+hora "de pared" (sin zona real) a minutos desde una
+// referencia arbitraria. Usar SIEMPRE con valores que ya estén en la misma
+// zona horaria (la del usuario), para poder restarlos entre sí sin que el
+// offset del servidor afecte el resultado.
+function minutosDesdeReferencia(fechaStr, horaStr) {
+  const [y, m, d] = fechaStr.split('-').map(Number);
+  const [h, min] = horaStr.split(':').map(Number);
+  return Date.UTC(y, m - 1, d, h, min) / 60000;
 }
 
 function formatearFecha(date) {
@@ -163,7 +173,7 @@ async function recalcularFechaFinTratamiento(tratamientoId, supabaseClient) {
     const fechaFinMed = new Date(fechaInicio + 'T00:00:00');
     fechaFinMed.setDate(fechaFinMed.getDate() + med.duracion_dias - 1);
     const fechaStr = fechaFinMed.toISOString().split('T')[0];
-    
+
     if (!fechaFinMax || fechaStr > fechaFinMax) {
       fechaFinMax = fechaStr;
     }
@@ -271,7 +281,7 @@ app.post('/tratamientos', verifyToken, async (req, res) => {
           }]);
         if (medError) throw medError;
       }
-      
+
       await recalcularFechaFinTratamiento(tratamientoData.id, supabase);
     }
 
@@ -345,20 +355,20 @@ app.patch('/tratamientos/:id/estado', verifyToken, async (req, res) => {
     const { activo, razon } = req.body;
     const timezone = obtenerTimezone(req);
     const { fecha: hoyStr } = obtenerAhoraEnZona(timezone);
-    
+
     const { data: tratamiento, error: getError } = await supabase
       .from('tratamientos')
       .select('historial_ajustes, estado')
       .eq('id', req.params.id)
       .eq('usuario_id', req.usuario_id)
       .single();
-    
+
     if (getError) throw getError;
-    
+
     if (activo === false) {
       await supabase
         .from('medicamentos')
-        .update({ 
+        .update({
           activo: false,
           fecha_suspension: hoyStr
         })
@@ -366,32 +376,32 @@ app.patch('/tratamientos/:id/estado', verifyToken, async (req, res) => {
     } else {
       await supabase
         .from('medicamentos')
-        .update({ 
+        .update({
           activo: true,
           fecha_suspension: null
         })
         .eq('tratamiento_id', req.params.id);
-      
+
       await recalcularFechaFinTratamiento(req.params.id, supabase);
     }
-    
+
     const historial = tratamiento.historial_ajustes || [];
     historial.push({
       fecha: hoyStr,
       tipo: activo ? 'reactivar' : 'suspender',
       razon: razon || (activo ? 'Reactivación del tratamiento' : 'Suspensión del tratamiento')
     });
-    
+
     const { error } = await supabase
       .from('tratamientos')
-      .update({ 
+      .update({
         activo,
         historial_ajustes: historial,
         ultimo_ajuste: hoyStr
       })
       .eq('id', req.params.id)
       .eq('usuario_id', req.usuario_id);
-      
+
     if (error) throw error;
     res.json({ success: true });
   } catch (error) {
@@ -435,9 +445,9 @@ app.post('/tratamientos/:tratamientoId/medicamentos', verifyToken, async (req, r
       .single();
 
     if (medError) throw medError;
-    
+
     await recalcularFechaFinTratamiento(req.params.tratamientoId, supabase);
-    
+
     res.json({ success: true, data: medData });
   } catch (error) {
     console.error('Error en POST /tratamientos/:tratamientoId/medicamentos:', error);
@@ -567,20 +577,20 @@ app.patch('/medicamentos/:id/extender', verifyToken, async (req, res) => {
     const { diasExtra, razon } = req.body;
     const timezone = obtenerTimezone(req);
     const { fecha: hoyStr } = obtenerAhoraEnZona(timezone);
-    
+
     if (!diasExtra || diasExtra < 1) {
       return res.status(400).json({
         success: false,
         error: 'Los días extra deben ser al menos 1'
       });
     }
-    
+
     const { data: medicamento, error: getError } = await supabase
       .from('medicamentos')
       .select('*')
       .eq('id', req.params.id)
       .single();
-    
+
     if (getError) throw getError;
     if (medicamento.activo === false) {
       return res.status(400).json({
@@ -588,24 +598,24 @@ app.patch('/medicamentos/:id/extender', verifyToken, async (req, res) => {
         error: 'No se puede extender un medicamento suspendido'
       });
     }
-    
+
     const nuevasTomas = generarTomas(
       hoyStr,
       medicamento.duracion_dias + diasExtra,
       medicamento.frecuencia,
       medicamento.hora_inicio
     );
-    
+
     const tomasExistentes = medicamento.tomas || [];
     const tomasFinal = [...tomasExistentes];
-    
+
     for (const toma of nuevasTomas) {
       const existe = tomasFinal.some(t => t.fecha === toma.fecha && t.hora === toma.hora);
       if (!existe) {
         tomasFinal.push(toma);
       }
     }
-    
+
     const historial = medicamento.historial_ajustes || [];
     historial.push({
       fecha: hoyStr,
@@ -614,7 +624,7 @@ app.patch('/medicamentos/:id/extender', verifyToken, async (req, res) => {
       diasExtra: diasExtra,
       nuevaDuracion: medicamento.duracion_dias + diasExtra
     });
-    
+
     const { data, error } = await supabase
       .from('medicamentos')
       .update({
@@ -626,11 +636,11 @@ app.patch('/medicamentos/:id/extender', verifyToken, async (req, res) => {
       .eq('id', req.params.id)
       .select()
       .single();
-    
+
     if (error) throw error;
-    
+
     await recalcularFechaFinTratamiento(medicamento.tratamiento_id, supabase);
-    
+
     res.json({ success: true, data });
   } catch (error) {
     console.error('Error extendiendo medicamento:', error);
@@ -643,7 +653,7 @@ app.patch('/medicamentos/:id/cambiar-frecuencia', verifyToken, async (req, res) 
     const { nuevaFrecuencia, razon } = req.body;
     const timezone = obtenerTimezone(req);
     const { fecha: hoyStr } = obtenerAhoraEnZona(timezone);
-    
+
     const frecuenciasValidas = ['Cada 4 horas', 'Cada 6 horas', 'Cada 8 horas', 'Cada 12 horas', 'Una vez al día', 'Según necesidad'];
     if (!frecuenciasValidas.includes(nuevaFrecuencia)) {
       return res.status(400).json({
@@ -651,13 +661,13 @@ app.patch('/medicamentos/:id/cambiar-frecuencia', verifyToken, async (req, res) 
         error: 'Frecuencia no válida'
       });
     }
-    
+
     const { data: medicamento, error: getError } = await supabase
       .from('medicamentos')
       .select('*')
       .eq('id', req.params.id)
       .single();
-    
+
     if (getError) throw getError;
     if (medicamento.activo === false) {
       return res.status(400).json({
@@ -665,17 +675,17 @@ app.patch('/medicamentos/:id/cambiar-frecuencia', verifyToken, async (req, res) 
         error: 'No se puede modificar un medicamento suspendido'
       });
     }
-    
+
     const tomasPasadas = (medicamento.tomas || []).filter(t => t.fecha < hoyStr);
     const completadasHoy = (medicamento.tomas || []).filter(t => t.fecha === hoyStr && t.completado === true);
-    
+
     const nuevasTomas = generarTomas(
       hoyStr,
       medicamento.duracion_dias,
       nuevaFrecuencia,
       medicamento.hora_inicio
     );
-    
+
     const tomasFinal = [...tomasPasadas, ...completadasHoy];
     for (const toma of nuevasTomas) {
       const existe = tomasFinal.some(t => t.fecha === toma.fecha && t.hora === toma.hora);
@@ -683,7 +693,7 @@ app.patch('/medicamentos/:id/cambiar-frecuencia', verifyToken, async (req, res) 
         tomasFinal.push(toma);
       }
     }
-    
+
     const historial = medicamento.historial_ajustes || [];
     historial.push({
       fecha: hoyStr,
@@ -692,7 +702,7 @@ app.patch('/medicamentos/:id/cambiar-frecuencia', verifyToken, async (req, res) 
       frecuenciaAnterior: medicamento.frecuencia,
       frecuenciaNueva: nuevaFrecuencia
     });
-    
+
     const { data, error } = await supabase
       .from('medicamentos')
       .update({
@@ -704,11 +714,11 @@ app.patch('/medicamentos/:id/cambiar-frecuencia', verifyToken, async (req, res) 
       .eq('id', req.params.id)
       .select()
       .single();
-    
+
     if (error) throw error;
-    
+
     await recalcularFechaFinTratamiento(medicamento.tratamiento_id, supabase);
-    
+
     res.json({ success: true, data });
   } catch (error) {
     console.error('Error cambiando frecuencia:', error);
@@ -721,13 +731,13 @@ app.patch('/medicamentos/:id/suspender', verifyToken, async (req, res) => {
     const { razon } = req.body;
     const timezone = obtenerTimezone(req);
     const { fecha: hoyStr } = obtenerAhoraEnZona(timezone);
-    
+
     const { data: medicamento, error: getError } = await supabase
       .from('medicamentos')
       .select('*')
       .eq('id', req.params.id)
       .single();
-    
+
     if (getError) throw getError;
     if (medicamento.activo === false) {
       return res.status(400).json({
@@ -735,16 +745,16 @@ app.patch('/medicamentos/:id/suspender', verifyToken, async (req, res) => {
         error: 'El medicamento ya está suspendido'
       });
     }
-    
+
     const tomasFinal = medicamento.tomas || [];
-    
+
     const historial = medicamento.historial_ajustes || [];
     historial.push({
       fecha: hoyStr,
       tipo: 'suspender',
       razon: razon || 'Suspensión indicada por médico'
     });
-    
+
     const { data, error } = await supabase
       .from('medicamentos')
       .update({
@@ -757,11 +767,11 @@ app.patch('/medicamentos/:id/suspender', verifyToken, async (req, res) => {
       .eq('id', req.params.id)
       .select()
       .single();
-    
+
     if (error) throw error;
-    
+
     await recalcularFechaFinTratamiento(medicamento.tratamiento_id, supabase);
-    
+
     res.json({ success: true, data });
   } catch (error) {
     console.error('Error suspendiendo medicamento:', error);
@@ -774,13 +784,13 @@ app.patch('/medicamentos/:id/reactivar', verifyToken, async (req, res) => {
     const { razon } = req.body;
     const timezone = obtenerTimezone(req);
     const { fecha: hoyStr } = obtenerAhoraEnZona(timezone);
-    
+
     const { data: medicamento, error: getError } = await supabase
       .from('medicamentos')
       .select('*')
       .eq('id', req.params.id)
       .single();
-    
+
     if (getError) throw getError;
     if (medicamento.activo === true) {
       return res.status(400).json({
@@ -788,14 +798,14 @@ app.patch('/medicamentos/:id/reactivar', verifyToken, async (req, res) => {
         error: 'El medicamento ya está activo'
       });
     }
-    
+
     const historial = medicamento.historial_ajustes || [];
     historial.push({
       fecha: hoyStr,
       tipo: 'reactivar',
       razon: razon || 'Reactivación indicada por médico'
     });
-    
+
     const { data, error } = await supabase
       .from('medicamentos')
       .update({
@@ -807,11 +817,11 @@ app.patch('/medicamentos/:id/reactivar', verifyToken, async (req, res) => {
       .eq('id', req.params.id)
       .select()
       .single();
-    
+
     if (error) throw error;
-    
+
     await recalcularFechaFinTratamiento(medicamento.tratamiento_id, supabase);
-    
+
     res.json({ success: true, data });
   } catch (error) {
     console.error('Error reactivando medicamento:', error);
@@ -819,13 +829,12 @@ app.patch('/medicamentos/:id/reactivar', verifyToken, async (req, res) => {
   }
 });
 
+// ==================== TOMAS ENDPOINT (con fix de zona horaria) ====================
+
 app.post('/medicamentos/:medicamentoId/tomas', verifyToken, async (req, res) => {
   try {
     const { fecha, hora, completado } = req.body;
     const MARGEN_TOMA_MINUTOS = 30;
-    const horaProgramada = new Date(fecha + 'T' + hora + ':00');
-    const horaLimite = new Date(horaProgramada.getTime() + MARGEN_TOMA_MINUTOS * 60 * 1000);
-    const ahora = new Date();
 
     if (completado === false) {
       return res.status(400).json({
@@ -834,13 +843,24 @@ app.post('/medicamentos/:medicamentoId/tomas', verifyToken, async (req, res) => 
       });
     }
 
-    if (ahora < horaProgramada) {
+    // Usar la zona horaria del usuario (header X-Timezone), no la del servidor.
+    // Antes se usaba `new Date(fecha + 'T' + hora)`, que Node interpreta en la
+    // zona horaria del SERVIDOR (normalmente UTC en Render), provocando 400
+    // falsos cuando el usuario está en otra zona horaria.
+    const timezone = obtenerTimezone(req);
+    const { fecha: hoyStr, hora: horaActualStr } = obtenerAhoraEnZona(timezone);
+
+    const minutosProgramados = minutosDesdeReferencia(fecha, hora);
+    const minutosActuales = minutosDesdeReferencia(hoyStr, horaActualStr);
+    const diferenciaMinutos = minutosActuales - minutosProgramados;
+
+    if (diferenciaMinutos < 0) {
       return res.status(400).json({
         success: false,
         error: 'Todavía no es hora de tomar esta dosis'
       });
     }
-    if (ahora > horaLimite) {
+    if (diferenciaMinutos > MARGEN_TOMA_MINUTOS) {
       return res.status(400).json({
         success: false,
         error: 'Ya pasó el margen de 30 minutos para registrar esta toma'
@@ -854,7 +874,7 @@ app.post('/medicamentos/:medicamentoId/tomas', verifyToken, async (req, res) => 
       .single();
 
     if (getError) throw getError;
-    
+
     if (medicamento.activo === false) {
       return res.status(400).json({
         success: false,
@@ -864,7 +884,7 @@ app.post('/medicamentos/:medicamentoId/tomas', verifyToken, async (req, res) => 
 
     let tomas = medicamento.tomas || [];
     let tomaEncontrada = false;
-    
+
     tomas = tomas.map(toma => {
       if (toma.fecha === fecha && toma.hora === hora) {
         tomaEncontrada = true;
@@ -919,7 +939,7 @@ app.get('/medicamentos/:id/historial', verifyToken, async (req, res) => {
       .select('historial_ajustes, nombre')
       .eq('id', req.params.id)
       .single();
-    
+
     if (error) throw error;
     res.json({ success: true, data: data.historial_ajustes || [] });
   } catch (error) {
