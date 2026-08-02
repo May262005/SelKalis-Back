@@ -35,10 +35,7 @@ const verifyToken = (req, res, next) => {
   }
 };
 
-// ✅ NUEVO: normaliza términos con letras repetidas exageradamente
-// Ej: "Cardiologiaaaaaaaaaaaaa" -> "Cardiologiaa"
-// Colapsa cualquier letra repetida 3+ veces seguidas a solo 2 repeticiones,
-// para que quede dentro del alcance de fuzziness:2 en Elasticsearch.
+// ✅ Normaliza términos con letras repetidas
 function normalizarTermino(termino) {
   if (!termino) return termino;
   return termino.replace(/(.)\1{2,}/g, '$1$1');
@@ -48,13 +45,12 @@ app.get('/health', (req, res) => {
   res.json({ status: 'OK', service: 'search-service' });
 });
 
-// ==================== BÚSQUEDA TOLERANTE (SIN LÍMITE DE ERRORES) ====================
+// ==================== BÚSQUEDA TOLERANTE ====================
 app.post('/search/modulo', verifyToken, async (req, res) => {
   try {
     const { modulo, filtros = {} } = req.body;
     const usuarioId = req.usuario_id;
 
-    // ✅ Normalizamos el término antes de usarlo en cualquier query
     const terminoOriginal = req.body.termino;
     const termino = normalizarTermino(terminoOriginal);
 
@@ -70,15 +66,9 @@ app.post('/search/modulo', verifyToken, async (req, res) => {
 
     const campos = camposPorModulo[modulo] || ['*'];
 
-    // ✅ BÚSQUEDA TOLERANTE: Combina fuzzy + wildcard + coincidencia parcial
     const shouldQueries = [];
 
-    // 1. Fuzzy search con fuzziness "AUTO" (se ajusta al largo de cada palabra)
-    // ✅ Antes usaba fuzziness:2 fijo + operador OR, lo que hacía que términos
-    // cortos como "50 mg" matchearan basura como "5 ml" (distancia de edición 1
-    // en palabras tan cortas es casi cualquier cosa). AUTO reduce la tolerancia
-    // para palabras cortas, y operator:"and" exige que todas las palabras de la
-    // búsqueda aparezcan (con tolerancia), no que baste con que matchee una sola.
+    // 1. Fuzzy search con fuzziness "AUTO" - ✅ OPERADOR 'or' para que coincida con ALGUNA palabra
     for (const campo of campos) {
       shouldQueries.push({
         match: {
@@ -86,14 +76,14 @@ app.post('/search/modulo', verifyToken, async (req, res) => {
             query: termino,
             fuzziness: 'AUTO',
             prefix_length: 1,
-            operator: 'and',
+            operator: 'or', // ✅ CAMBIADO: antes era 'and'
             boost: 3
           }
         }
       });
     }
 
-    // 2. Coincidencia parcial con wildcard (SIN LÍMITE de errores)
+    // 2. Coincidencia parcial con wildcard
     for (const campo of campos) {
       shouldQueries.push({
         wildcard: {
@@ -105,13 +95,13 @@ app.post('/search/modulo', verifyToken, async (req, res) => {
       });
     }
 
-    // 3. Coincidencia exacta (mayor prioridad)
+    // 3. Coincidencia exacta - ✅ TAMBIÉN con 'or'
     for (const campo of campos) {
       shouldQueries.push({
         match: {
           [campo]: {
             query: termino,
-            operator: 'and',
+            operator: 'or', // ✅ CAMBIADO: antes era 'and'
             boost: 5
           }
         }
@@ -187,13 +177,12 @@ app.post('/search/modulo', verifyToken, async (req, res) => {
   }
 });
 
-// BÚSQUEDA GLOBAL
+// ==================== BÚSQUEDA GLOBAL ====================
 app.post('/search/global', verifyToken, async (req, res) => {
   try {
     const { limite = 20 } = req.body;
     const usuarioId = req.usuario_id;
 
-    // ✅ Normalizamos el término también en la búsqueda global
     const terminoOriginal = req.body.termino;
     const termino = normalizarTermino(terminoOriginal);
 
@@ -218,7 +207,7 @@ app.post('/search/global', verifyToken, async (req, res) => {
                   fields: ['*'],
                   fuzziness: 'AUTO',
                   prefix_length: 1,
-                  operator: 'and',
+                  operator: 'or', // ✅ CAMBIADO: antes era 'and'
                   boost: 3
                 }
               },
@@ -278,6 +267,7 @@ app.post('/search/global', verifyToken, async (req, res) => {
   }
 });
 
+// ==================== INDEXAR ====================
 app.post('/search/indexar', verifyToken, async (req, res) => {
   try {
     const { modulo, documento } = req.body;
@@ -307,6 +297,7 @@ app.post('/search/indexar', verifyToken, async (req, res) => {
   }
 });
 
+// ==================== ELIMINAR ====================
 app.delete('/search/:modulo/:id', verifyToken, async (req, res) => {
   try {
     const { modulo, id } = req.params;
@@ -329,7 +320,7 @@ app.delete('/search/:modulo/:id', verifyToken, async (req, res) => {
   }
 });
 
-// ==================== CREAR ÍNDICES AL INICIAR ====================
+// ==================== CREAR ÍNDICES ====================
 async function crearIndices() {
   const indices = ['citas', 'tratamientos', 'medicamentos', 'estudios', 'documentos'];
 
