@@ -35,40 +35,30 @@ const verifyToken = (req, res, next) => {
   }
 };
 
-// ✅ Normaliza términos con letras repetidas
 function normalizarTermino(termino) {
   if (!termino) return termino;
   return termino.replace(/(.)\1{2,}/g, '$1$1');
 }
 
-// ✅ FIX: el wildcard de Elasticsearch NO analiza el texto (no lo pasa por el
-// analizador que pone todo en minúsculas y quita acentos). Si buscas "Dr" con
-// mayúscula pero el índice guardó el token en minúsculas ("dr"), el wildcard
-// nunca hace match. Por eso normalizamos a minúsculas y sin acentos aquí mismo,
-// para que el wildcard compare "manzana con manzana".
 function normalizarParaWildcard(termino) {
   if (!termino) return termino;
   return termino
     .toLowerCase()
     .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, ''); // quita acentos/diacríticos
+    .replace(/[\u0300-\u036f]/g, '');
 }
 
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', service: 'search-service' });
 });
 
-// ==================== BÚSQUEDA TOLERANTE ====================
 app.post('/search/modulo', verifyToken, async (req, res) => {
   try {
     const { modulo, filtros = {} } = req.body;
     const usuarioId = req.usuario_id;
-
     const terminoOriginal = req.body.termino;
     const termino = normalizarTermino(terminoOriginal);
     const terminoWildcard = normalizarParaWildcard(termino);
-
-    console.log(`🔍 Buscando en ${modulo}: "${terminoOriginal}" (normalizado: "${termino}", wildcard: "${terminoWildcard}") (usuario: ${usuarioId})`);
 
     const camposPorModulo = {
       citas: ['titulo', 'especialidad', 'lugar', 'notas'],
@@ -79,10 +69,8 @@ app.post('/search/modulo', verifyToken, async (req, res) => {
     };
 
     const campos = camposPorModulo[modulo] || ['*'];
-
     const shouldQueries = [];
 
-    // 1. Fuzzy search con fuzziness "AUTO" - operador 'or' para que coincida con ALGUNA palabra
     for (const campo of campos) {
       shouldQueries.push({
         match: {
@@ -97,21 +85,18 @@ app.post('/search/modulo', verifyToken, async (req, res) => {
       });
     }
 
-    // 2. Coincidencia parcial con wildcard - ✅ AHORA usa el término normalizado
-    //    (minúsculas, sin acentos) para que sí matchee contra los tokens indexados.
     for (const campo of campos) {
       shouldQueries.push({
         wildcard: {
           [campo]: {
             value: `*${terminoWildcard}*`,
-            case_insensitive: true, // por si acaso, doble seguro (ES >= 7.10)
+            case_insensitive: true,
             boost: 2
           }
         }
       });
     }
 
-    // 3. Coincidencia exacta
     for (const campo of campos) {
       shouldQueries.push({
         match: {
@@ -124,10 +109,6 @@ app.post('/search/modulo', verifyToken, async (req, res) => {
       });
     }
 
-    // 4. ✅ Autocompletado / búsqueda por prefijo o fragmento (ej. "Tit" -> "Tito")
-    //    Usa el sub-campo .autocomplete (edge n-grams). No requiere fuzziness porque
-    //    ya resuelve el caso de "escribí solo una parte del nombre".
-    //    Requiere que el índice tenga el mapping con .autocomplete (ver PUT del índice).
     for (const campo of campos) {
       shouldQueries.push({
         match: {
@@ -177,8 +158,6 @@ app.post('/search/modulo', verifyToken, async (req, res) => {
       }
     });
 
-    console.log(`   ↳ ${results.hits.total.value} resultado(s) encontrados en ${index}`);
-
     const resultados = results.hits.hits.map(hit => {
       const source = hit._source;
       return {
@@ -203,7 +182,6 @@ app.post('/search/modulo', verifyToken, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Error en búsqueda:', error);
     res.status(500).json({
       success: false,
       error: error.message
@@ -211,17 +189,13 @@ app.post('/search/modulo', verifyToken, async (req, res) => {
   }
 });
 
-// ==================== BÚSQUEDA GLOBAL ====================
 app.post('/search/global', verifyToken, async (req, res) => {
   try {
     const { limite = 20 } = req.body;
     const usuarioId = req.usuario_id;
-
     const terminoOriginal = req.body.termino;
     const termino = normalizarTermino(terminoOriginal);
     const terminoWildcard = normalizarParaWildcard(termino);
-
-    console.log(`🔍 Búsqueda global: "${terminoOriginal}" (normalizado: "${termino}", wildcard: "${terminoWildcard}") (usuario: ${usuarioId})`);
 
     const results = await esClient.search({
       index: 'selkalis_*',
@@ -296,7 +270,6 @@ app.post('/search/global', verifyToken, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Error en búsqueda global:', error);
     res.status(500).json({
       success: false,
       error: error.message
@@ -304,12 +277,10 @@ app.post('/search/global', verifyToken, async (req, res) => {
   }
 });
 
-// ==================== INDEXAR ====================
 app.post('/search/indexar', verifyToken, async (req, res) => {
   try {
     const { modulo, documento } = req.body;
     const usuarioId = req.usuario_id;
-
     const index = `selkalis_${modulo}`;
 
     await esClient.index({
@@ -322,11 +293,9 @@ app.post('/search/indexar', verifyToken, async (req, res) => {
       }
     });
 
-    console.log(`✅ Indexado en ${modulo}: ${documento.id} (usuario: ${usuarioId})`);
     res.json({ success: true, message: 'Documento indexado correctamente' });
 
   } catch (error) {
-    console.error('❌ Error indexando:', error);
     res.status(500).json({
       success: false,
       error: error.message
@@ -334,7 +303,6 @@ app.post('/search/indexar', verifyToken, async (req, res) => {
   }
 });
 
-// ==================== ELIMINAR ====================
 app.delete('/search/:modulo/:id', verifyToken, async (req, res) => {
   try {
     const { modulo, id } = req.params;
@@ -345,11 +313,9 @@ app.delete('/search/:modulo/:id', verifyToken, async (req, res) => {
       id
     });
 
-    console.log(`🗑️ Eliminado de ${modulo}: ${id}`);
     res.json({ success: true, message: 'Documento eliminado' });
 
   } catch (error) {
-    console.error('❌ Error eliminando:', error);
     res.status(500).json({
       success: false,
       error: error.message
@@ -357,16 +323,6 @@ app.delete('/search/:modulo/:id', verifyToken, async (req, res) => {
   }
 });
 
-// ==================== CREAR ÍNDICES ====================
-// ✅ FIX: el analizador "spanish" de Elasticsearch NO incluye asciifolding,
-// es decir "González" se indexa como "gonzález" (con acento) y NO como
-// "gonzalez". Esto hacía fallar búsquedas sin acento en casos límite.
-// Ahora usamos un analizador personalizado que: minúsculas -> quita acentos
-// -> aplica el stemmer español -> quita stopwords en español.
-// ✅ Helper: define un campo de texto con su sub-campo .autocomplete (edge n-grams).
-// Esto es lo que permite que CUALQUIER palabra en CUALQUIER campo de texto se pueda
-// buscar por fragmento/prefijo (ej. "Tit" encuentra "Tito", "Garc" encuentra "Garcia"),
-// de forma genérica, sin tener que anticipar nombres o palabras específicas.
 function campoTextoConAutocomplete() {
   return {
     type: 'text',
@@ -401,12 +357,7 @@ const ANALYSIS_SETTINGS = {
     spanish_analyzer: {
       type: 'custom',
       tokenizer: 'standard',
-      filter: [
-        'lowercase',
-        'asciifolding', // ✅ quita acentos: "González" -> "gonzalez"
-        'spanish_stop',
-        'spanish_stemmer'
-      ]
+      filter: ['lowercase', 'asciifolding', 'spanish_stop', 'spanish_stemmer']
     },
     autocomplete_index_analyzer: {
       type: 'custom',
@@ -421,9 +372,6 @@ const ANALYSIS_SETTINGS = {
   }
 };
 
-// ✅ Mapping por índice, usando campoTextoConAutocomplete() en TODOS los campos
-// de texto libre (no solo título/nombre) para que la búsqueda por fragmento
-// funcione en cualquier campo, para cualquier módulo.
 const MAPPINGS_POR_INDICE = {
   citas: {
     id: { type: 'keyword' },
@@ -520,18 +468,13 @@ async function crearIndices() {
             }
           }
         });
-        console.log(`✅ Índice ${indexName} creado correctamente`);
-      } else {
-        console.log(`✅ Índice ${indexName} ya existe`);
       }
     } catch (error) {
-      console.error(`❌ Error creando ${indexName}:`, error);
+      // Silencio
     }
   }
 }
 
 crearIndices();
 
-app.listen(PORT, () => {
-  console.log(`🚀 Search Service running on port ${PORT}`);
-});
+app.listen(PORT, () => {});
