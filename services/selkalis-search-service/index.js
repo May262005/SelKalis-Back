@@ -124,6 +124,22 @@ app.post('/search/modulo', verifyToken, async (req, res) => {
       });
     }
 
+    // 4. ✅ Autocompletado / búsqueda por prefijo o fragmento (ej. "Tit" -> "Tito")
+    //    Usa el sub-campo .autocomplete (edge n-grams). No requiere fuzziness porque
+    //    ya resuelve el caso de "escribí solo una parte del nombre".
+    //    Requiere que el índice tenga el mapping con .autocomplete (ver PUT del índice).
+    for (const campo of campos) {
+      shouldQueries.push({
+        match: {
+          [`${campo}.autocomplete`]: {
+            query: termino,
+            operator: 'or',
+            boost: 4
+          }
+        }
+      });
+    }
+
     const query = {
       bool: {
         must: [
@@ -347,6 +363,142 @@ app.delete('/search/:modulo/:id', verifyToken, async (req, res) => {
 // "gonzalez". Esto hacía fallar búsquedas sin acento en casos límite.
 // Ahora usamos un analizador personalizado que: minúsculas -> quita acentos
 // -> aplica el stemmer español -> quita stopwords en español.
+// ✅ Helper: define un campo de texto con su sub-campo .autocomplete (edge n-grams).
+// Esto es lo que permite que CUALQUIER palabra en CUALQUIER campo de texto se pueda
+// buscar por fragmento/prefijo (ej. "Tit" encuentra "Tito", "Garc" encuentra "Garcia"),
+// de forma genérica, sin tener que anticipar nombres o palabras específicas.
+function campoTextoConAutocomplete() {
+  return {
+    type: 'text',
+    analyzer: 'spanish_analyzer',
+    fields: {
+      autocomplete: {
+        type: 'text',
+        analyzer: 'autocomplete_index_analyzer',
+        search_analyzer: 'autocomplete_search_analyzer'
+      }
+    }
+  };
+}
+
+const ANALYSIS_SETTINGS = {
+  filter: {
+    spanish_stop: {
+      type: 'stop',
+      stopwords: '_spanish_'
+    },
+    spanish_stemmer: {
+      type: 'stemmer',
+      language: 'light_spanish'
+    },
+    autocomplete_filter: {
+      type: 'edge_ngram',
+      min_gram: 2,
+      max_gram: 20
+    }
+  },
+  analyzer: {
+    spanish_analyzer: {
+      type: 'custom',
+      tokenizer: 'standard',
+      filter: [
+        'lowercase',
+        'asciifolding', // ✅ quita acentos: "González" -> "gonzalez"
+        'spanish_stop',
+        'spanish_stemmer'
+      ]
+    },
+    autocomplete_index_analyzer: {
+      type: 'custom',
+      tokenizer: 'standard',
+      filter: ['lowercase', 'asciifolding', 'autocomplete_filter']
+    },
+    autocomplete_search_analyzer: {
+      type: 'custom',
+      tokenizer: 'standard',
+      filter: ['lowercase', 'asciifolding']
+    }
+  }
+};
+
+// ✅ Mapping por índice, usando campoTextoConAutocomplete() en TODOS los campos
+// de texto libre (no solo título/nombre) para que la búsqueda por fragmento
+// funcione en cualquier campo, para cualquier módulo.
+const MAPPINGS_POR_INDICE = {
+  citas: {
+    id: { type: 'keyword' },
+    usuario_id: { type: 'keyword' },
+    titulo: campoTextoConAutocomplete(),
+    especialidad: campoTextoConAutocomplete(),
+    fecha: { type: 'date' },
+    hora: { type: 'keyword' },
+    tipo: { type: 'keyword' },
+    lugar: campoTextoConAutocomplete(),
+    notas: campoTextoConAutocomplete(),
+    estado: { type: 'keyword' },
+    created_at: { type: 'date' },
+    updated_at: { type: 'date' },
+    fecha_indexacion: { type: 'date' }
+  },
+  tratamientos: {
+    id: { type: 'keyword' },
+    usuario_id: { type: 'keyword' },
+    nombre: campoTextoConAutocomplete(),
+    diagnostico: campoTextoConAutocomplete(),
+    fecha_inicio: { type: 'date' },
+    fecha_fin: { type: 'date' },
+    notas: campoTextoConAutocomplete(),
+    estado: { type: 'keyword' },
+    activo: { type: 'boolean' },
+    created_at: { type: 'date' },
+    updated_at: { type: 'date' },
+    fecha_indexacion: { type: 'date' }
+  },
+  medicamentos: {
+    id: { type: 'keyword' },
+    usuario_id: { type: 'keyword' },
+    nombre: campoTextoConAutocomplete(),
+    concentracion: campoTextoConAutocomplete(),
+    dosis: campoTextoConAutocomplete(),
+    frecuencia: { type: 'keyword' },
+    duracion_dias: { type: 'integer' },
+    instrucciones: campoTextoConAutocomplete(),
+    tratamiento_id: { type: 'keyword' },
+    tratamiento_nombre: campoTextoConAutocomplete(),
+    activo: { type: 'boolean' },
+    created_at: { type: 'date' },
+    updated_at: { type: 'date' },
+    fecha_indexacion: { type: 'date' }
+  },
+  estudios: {
+    id: { type: 'keyword' },
+    usuario_id: { type: 'keyword' },
+    titulo: campoTextoConAutocomplete(),
+    tipo: campoTextoConAutocomplete(),
+    fecha: { type: 'date' },
+    hora: { type: 'keyword' },
+    lugar: campoTextoConAutocomplete(),
+    notas: campoTextoConAutocomplete(),
+    estado: { type: 'keyword' },
+    created_at: { type: 'date' },
+    updated_at: { type: 'date' },
+    fecha_indexacion: { type: 'date' }
+  },
+  documentos: {
+    id: { type: 'keyword' },
+    usuario_id: { type: 'keyword' },
+    nombre: campoTextoConAutocomplete(),
+    categoria: { type: 'keyword' },
+    descripcion: campoTextoConAutocomplete(),
+    tipo: { type: 'keyword' },
+    url: { type: 'keyword' },
+    tamano: { type: 'keyword' },
+    created_at: { type: 'date' },
+    updated_at: { type: 'date' },
+    fecha_indexacion: { type: 'date' }
+  }
+};
+
 async function crearIndices() {
   const indices = ['citas', 'tratamientos', 'medicamentos', 'estudios', 'documentos'];
 
@@ -361,61 +513,10 @@ async function crearIndices() {
           index: indexName,
           body: {
             settings: {
-              analysis: {
-                filter: {
-                  spanish_stop: {
-                    type: 'stop',
-                    stopwords: '_spanish_'
-                  },
-                  spanish_stemmer: {
-                    type: 'stemmer',
-                    language: 'light_spanish'
-                  }
-                },
-                analyzer: {
-                  spanish_analyzer: {
-                    type: 'custom',
-                    tokenizer: 'standard',
-                    filter: [
-                      'lowercase',
-                      'asciifolding', // ✅ quita acentos: "González" -> "gonzalez"
-                      'spanish_stop',
-                      'spanish_stemmer'
-                    ]
-                  }
-                }
-              }
+              analysis: ANALYSIS_SETTINGS
             },
             mappings: {
-              properties: {
-                id: { type: 'keyword' },
-                usuario_id: { type: 'keyword' },
-                titulo: { type: 'text', analyzer: 'spanish_analyzer' },
-                nombre: { type: 'text', analyzer: 'spanish_analyzer' },
-                diagnostico: { type: 'text', analyzer: 'spanish_analyzer' },
-                especialidad: { type: 'text', analyzer: 'spanish_analyzer' },
-                descripcion: { type: 'text', analyzer: 'spanish_analyzer' },
-                notas: { type: 'text', analyzer: 'spanish_analyzer' },
-                concentracion: { type: 'text' },
-                dosis: { type: 'text' },
-                frecuencia: { type: 'keyword' },
-                duracion_dias: { type: 'integer' },
-                tratamiento_id: { type: 'keyword' },
-                tratamiento_nombre: { type: 'text', analyzer: 'spanish_analyzer' },
-                fecha: { type: 'date' },
-                fecha_inicio: { type: 'date' },
-                fecha_fin: { type: 'date' },
-                estado: { type: 'keyword' },
-                tipo: { type: 'keyword' },
-                lugar: { type: 'text' },
-                categoria: { type: 'keyword' },
-                url: { type: 'keyword' },
-                tamano: { type: 'keyword' },
-                activo: { type: 'boolean' },
-                created_at: { type: 'date' },
-                updated_at: { type: 'date' },
-                fecha_indexacion: { type: 'date' }
-              }
+              properties: MAPPINGS_POR_INDICE[idx]
             }
           }
         });
