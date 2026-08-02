@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
+const path = require('path');  // ✅ IMPORTANTE
 const supabase = require('./db');
 
 require('dotenv').config({ path: path.join(__dirname, '../../.env') });
