@@ -73,14 +73,20 @@ app.post('/search/modulo', verifyToken, async (req, res) => {
     // ✅ BÚSQUEDA TOLERANTE: Combina fuzzy + wildcard + coincidencia parcial
     const shouldQueries = [];
 
-    // 1. Fuzzy search con fuzziness: 2 (máximo permitido)
+    // 1. Fuzzy search con fuzziness "AUTO" (se ajusta al largo de cada palabra)
+    // ✅ Antes usaba fuzziness:2 fijo + operador OR, lo que hacía que términos
+    // cortos como "50 mg" matchearan basura como "5 ml" (distancia de edición 1
+    // en palabras tan cortas es casi cualquier cosa). AUTO reduce la tolerancia
+    // para palabras cortas, y operator:"and" exige que todas las palabras de la
+    // búsqueda aparezcan (con tolerancia), no que baste con que matchee una sola.
     for (const campo of campos) {
       shouldQueries.push({
         match: {
           [campo]: {
             query: termino,
-            fuzziness: 2,
+            fuzziness: 'AUTO',
             prefix_length: 1,
+            operator: 'and',
             boost: 3
           }
         }
@@ -210,8 +216,9 @@ app.post('/search/global', verifyToken, async (req, res) => {
                 multi_match: {
                   query: termino,
                   fields: ['*'],
-                  fuzziness: 2,
+                  fuzziness: 'AUTO',
                   prefix_length: 1,
+                  operator: 'and',
                   boost: 3
                 }
               },
