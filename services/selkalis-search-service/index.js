@@ -1,4 +1,3 @@
-// index.js
 const express = require('express');
 const cors = require('cors');
 const { Client } = require('@elastic/elasticsearch');
@@ -8,26 +7,20 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 3006;
 
-// ==================== CONFIGURACIÓN DE ELASTICSEARCH ====================
-// Usa las credenciales de Elastic Cloud
 const esClient = new Client({
   node: process.env.ELASTICSEARCH_URL,
   auth: {
     apiKey: process.env.ELASTICSEARCH_API_KEY
-    // O usa usuario/contraseña:
-    // username: process.env.ELASTICSEARCH_USER,
-    // password: process.env.ELASTICSEARCH_PASSWORD
   }
 });
 
-// ==================== MIDDLEWARE ====================
 app.use(cors({
-  origin: ['https://selkalis.vercel.app', 'http://localhost:4200'],
-  credentials: true
+  origin: ['https://selkalis.vercel.app', 'https://sselkalis.vercel.app', 'http://localhost:4200'],
+  credentials: true,
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Timezone']
 }));
 app.use(express.json());
 
-// ==================== VERIFICAR TOKEN ====================
 const verifyToken = (req, res, next) => {
   const token = req.headers['authorization']?.split(' ')[1];
   if (!token) {
@@ -42,14 +35,11 @@ const verifyToken = (req, res, next) => {
   }
 };
 
-// ==================== HEALTH CHECK ====================
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', service: 'search-service' });
 });
 
-// ==================== ENDPOINTS DE BÚSQUEDA ====================
-
-// BÚSQUEDA EN UN MÓDULO ESPECÍFICO
+// ==================== BÚSQUEDA TOLERANTE (SIN LÍMITE DE ERRORES) ====================
 app.post('/search/modulo', verifyToken, async (req, res) => {
   try {
     const { modulo, termino, filtros = {} } = req.body;
@@ -57,39 +47,72 @@ app.post('/search/modulo', verifyToken, async (req, res) => {
 
     console.log(`🔍 Buscando en ${modulo}: "${termino}" (usuario: ${usuarioId})`);
 
-    // Definir qué campos buscar según el módulo
     const camposPorModulo = {
-      citas: ['titulo^3', 'especialidad^2', 'lugar', 'notas'],
-      tratamientos: ['nombre^3', 'diagnostico^2', 'notas'],
-      medicamentos: ['nombre^3', 'concentracion', 'dosis', 'instrucciones', 'tratamiento_nombre^2'],
-      estudios: ['titulo^3', 'tipo^2', 'lugar', 'descripcion'],
-      documentos: ['nombre^3', 'categoria', 'descripcion']
+      citas: ['titulo', 'especialidad', 'lugar', 'notas'],
+      tratamientos: ['nombre', 'diagnostico', 'notas'],
+      medicamentos: ['nombre', 'concentracion', 'dosis', 'instrucciones', 'tratamiento_nombre'],
+      estudios: ['titulo', 'tipo', 'lugar', 'descripcion'],
+      documentos: ['nombre', 'categoria', 'descripcion']
     };
 
     const campos = camposPorModulo[modulo] || ['*'];
 
-    // Construir la consulta
+    // ✅ BÚSQUEDA TOLERANTE: Combina fuzzy + wildcard + coincidencia parcial
+    const shouldQueries = [];
+
+    // 1. Fuzzy search con fuzziness: 2 (máximo permitido)
+    for (const campo of campos) {
+      shouldQueries.push({
+        match: {
+          [campo]: {
+            query: termino,
+            fuzziness: 2,
+            prefix_length: 1,
+            boost: 3
+          }
+        }
+      });
+    }
+
+    // 2. Coincidencia parcial con wildcard (SIN LÍMITE de errores)
+    for (const campo of campos) {
+      shouldQueries.push({
+        wildcard: {
+          [campo]: {
+            value: `*${termino}*`,
+            boost: 2
+          }
+        }
+      });
+    }
+
+    // 3. Coincidencia exacta (mayor prioridad)
+    for (const campo of campos) {
+      shouldQueries.push({
+        match: {
+          [campo]: {
+            query: termino,
+            operator: 'and',
+            boost: 5
+          }
+        }
+      });
+    }
+
     const query = {
       bool: {
         must: [
-          {
-            multi_match: {
-              query: termino,
-              fields: campos,
-              fuzziness: 'AUTO',
-              type: 'best_fields'
-            }
-          },
           {
             term: {
               usuario_id: usuarioId
             }
           }
-        ]
+        ],
+        should: shouldQueries,
+        minimum_should_match: 1
       }
     };
 
-    // Agregar filtros si existen
     if (Object.keys(filtros).length > 0) {
       query.bool.filter = [];
       for (const [key, value] of Object.entries(filtros)) {
@@ -97,7 +120,6 @@ app.post('/search/modulo', verifyToken, async (req, res) => {
       }
     }
 
-    // Ejecutar búsqueda
     const index = `selkalis_${modulo}`;
     const results = await esClient.search({
       index,
@@ -114,7 +136,6 @@ app.post('/search/modulo', verifyToken, async (req, res) => {
       }
     });
 
-    // Transformar resultados
     const resultados = results.hits.hits.map(hit => {
       const source = hit._source;
       return {
@@ -147,7 +168,7 @@ app.post('/search/modulo', verifyToken, async (req, res) => {
   }
 });
 
-// BÚSQUEDA GLOBAL (todos los módulos)
+// BÚSQUEDA GLOBAL
 app.post('/search/global', verifyToken, async (req, res) => {
   try {
     const { termino, limite = 20 } = req.body;
@@ -162,19 +183,39 @@ app.post('/search/global', verifyToken, async (req, res) => {
           bool: {
             must: [
               {
-                multi_match: {
-                  query: termino,
-                  fields: ['*'],
-                  fuzziness: 'AUTO',
-                  type: 'best_fields'
-                }
-              },
-              {
                 term: {
                   usuario_id: usuarioId
                 }
               }
-            ]
+            ],
+            should: [
+              {
+                multi_match: {
+                  query: termino,
+                  fields: ['*'],
+                  fuzziness: 2,
+                  prefix_length: 1,
+                  boost: 3
+                }
+              },
+              {
+                wildcard: {
+                  titulo: {
+                    value: `*${termino}*`,
+                    boost: 2
+                  }
+                }
+              },
+              {
+                wildcard: {
+                  nombre: {
+                    value: `*${termino}*`,
+                    boost: 2
+                  }
+                }
+              }
+            ],
+            minimum_should_match: 1
           }
         },
         size: limite
@@ -213,7 +254,6 @@ app.post('/search/global', verifyToken, async (req, res) => {
   }
 });
 
-// INDEXAR DOCUMENTO
 app.post('/search/indexar', verifyToken, async (req, res) => {
   try {
     const { modulo, documento } = req.body;
@@ -243,7 +283,6 @@ app.post('/search/indexar', verifyToken, async (req, res) => {
   }
 });
 
-// ELIMINAR DOCUMENTO
 app.delete('/search/:modulo/:id', verifyToken, async (req, res) => {
   try {
     const { modulo, id } = req.params;
@@ -266,7 +305,74 @@ app.delete('/search/:modulo/:id', verifyToken, async (req, res) => {
   }
 });
 
-// ==================== INICIAR SERVIDOR ====================
+// ==================== CREAR ÍNDICES AL INICIAR ====================
+async function crearIndices() {
+  const indices = ['citas', 'tratamientos', 'medicamentos', 'estudios', 'documentos'];
+
+  for (const idx of indices) {
+    const indexName = `selkalis_${idx}`;
+    
+    try {
+      const exists = await esClient.indices.exists({ index: indexName });
+      
+      if (!exists) {
+        await esClient.indices.create({
+          index: indexName,
+          body: {
+            settings: {
+              analysis: {
+                analyzer: {
+                  spanish_analyzer: {
+                    type: 'spanish'
+                  }
+                }
+              }
+            },
+            mappings: {
+              properties: {
+                id: { type: 'keyword' },
+                usuario_id: { type: 'keyword' },
+                titulo: { type: 'text', analyzer: 'spanish_analyzer' },
+                nombre: { type: 'text', analyzer: 'spanish_analyzer' },
+                diagnostico: { type: 'text', analyzer: 'spanish_analyzer' },
+                especialidad: { type: 'text', analyzer: 'spanish_analyzer' },
+                descripcion: { type: 'text', analyzer: 'spanish_analyzer' },
+                notas: { type: 'text', analyzer: 'spanish_analyzer' },
+                concentracion: { type: 'text' },
+                dosis: { type: 'text' },
+                frecuencia: { type: 'keyword' },
+                duracion_dias: { type: 'integer' },
+                tratamiento_id: { type: 'keyword' },
+                tratamiento_nombre: { type: 'text', analyzer: 'spanish_analyzer' },
+                fecha: { type: 'date' },
+                fecha_inicio: { type: 'date' },
+                fecha_fin: { type: 'date' },
+                estado: { type: 'keyword' },
+                tipo: { type: 'keyword' },
+                lugar: { type: 'text' },
+                categoria: { type: 'keyword' },
+                url: { type: 'keyword' },
+                tamano: { type: 'keyword' },
+                activo: { type: 'boolean' },
+                created_at: { type: 'date' },
+                updated_at: { type: 'date' },
+                fecha_indexacion: { type: 'date' }
+              }
+            }
+          }
+        });
+        console.log(`✅ Índice ${indexName} creado correctamente`);
+      } else {
+        console.log(`✅ Índice ${indexName} ya existe`);
+      }
+    } catch (error) {
+      console.error(`❌ Error creando ${indexName}:`, error);
+    }
+  }
+}
+
+crearIndices();
+
 app.listen(PORT, () => {
   console.log(`🚀 Search Service running on port ${PORT}`);
 });
