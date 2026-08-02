@@ -8,18 +8,15 @@ require('dotenv').config({ path: path.join(__dirname, '../../.env') });
 const app = express();
 const PORT = process.env.TRATAMIENTOS_SERVICE_PORT || 3002;
 
-// ==================== CORS CONFIGURACIÓN CORREGIDA ====================
-// Limpiar la URL de la barra al final
+// ==================== CORS CONFIGURACIÓN ====================
 const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:4200').replace(/\/$/, '');
 const allowedOrigins = [frontendUrl, frontendUrl + '/'];
 
 console.log(`CORS permitido para: ${frontendUrl}`);
 
-// Middleware CORS manual
 app.use((req, res, next) => {
   const origin = req.headers.origin;
 
-  // Verificar si el origen está permitido (con o sin barra)
   if (origin && (origin === frontendUrl || origin === frontendUrl + '/')) {
     res.setHeader('Access-Control-Allow-Origin', origin);
   } else if (origin && allowedOrigins.includes(origin)) {
@@ -90,14 +87,24 @@ function obtenerAhoraEnZona(timeZone) {
   };
 }
 
-// Convierte una fecha+hora "de pared" (sin zona real) a minutos desde una
-// referencia arbitraria. Usar SIEMPRE con valores que ya estén en la misma
-// zona horaria (la del usuario), para poder restarlos entre sí sin que el
-// offset del servidor afecte el resultado.
-function minutosDesdeReferencia(fechaStr, horaStr) {
+// ==================== CREAR FECHA LOCAL CORREGIDA ====================
+function crearFechaLocal(fechaStr, horaStr, timezone) {
   const [y, m, d] = fechaStr.split('-').map(Number);
   const [h, min] = horaStr.split(':').map(Number);
-  return Date.UTC(y, m - 1, d, h, min) / 60000;
+  
+  // Crear fecha en UTC pero con los valores de la zona horaria del usuario
+  const date = new Date(Date.UTC(y, m - 1, d, h, min));
+  
+  // Si tenemos timezone, ajustamos
+  if (timezone && timezone !== 'UTC') {
+    const userDate = new Date(date.toLocaleString('en-US', { timeZone: timezone }));
+    const userOffset = userDate.getTimezoneOffset();
+    const currentOffset = date.getTimezoneOffset();
+    const diffMinutes = userOffset - currentOffset;
+    date.setMinutes(date.getMinutes() + diffMinutes);
+  }
+  
+  return date;
 }
 
 function formatearFecha(date) {
@@ -829,8 +836,66 @@ app.patch('/medicamentos/:id/reactivar', verifyToken, async (req, res) => {
   }
 });
 
-// ==================== TOMAS ENDPOINT (con fix de zona horaria) ====================
+// ==================== NUEVO ENDPOINT: TOMAS DEL DÍA ====================
+app.get('/tomas/hoy', verifyToken, async (req, res) => {
+  try {
+    const timezone = obtenerTimezone(req);
+    const { fecha: hoyStr } = obtenerAhoraEnZona(timezone);
+    
+    // Obtener todos los tratamientos activos del usuario
+    const { data: tratamientos, error } = await supabase
+      .from('tratamientos')
+      .select(`*, medicamentos (*)`)
+      .eq('usuario_id', req.usuario_id)
+      .eq('activo', true);
 
+    if (error) throw error;
+
+    let totalTomasHoy = 0;
+    let completadasHoy = 0;
+    const tomasPorMedicamento = [];
+
+    for (const tratamiento of tratamientos || []) {
+      const medicamentos = tratamiento.medicamentos || [];
+      for (const med of medicamentos) {
+        if (med.activo === false) continue;
+        
+        const tomas = med.tomas || [];
+        const tomasDeHoy = tomas.filter((t) => t.fecha === hoyStr);
+        const completadasDeHoy = tomasDeHoy.filter((t) => t.completado === true);
+        
+        totalTomasHoy += tomasDeHoy.length;
+        completadasHoy += completadasDeHoy.length;
+        
+        if (tomasDeHoy.length > 0) {
+          tomasPorMedicamento.push({
+            medicamentoId: med.id,
+            nombre: med.nombre,
+            tomas: tomasDeHoy,
+            completadas: completadasDeHoy.length,
+            total: tomasDeHoy.length
+          });
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        fecha: hoyStr,
+        totalTomasHoy,
+        completadasHoy,
+        progresoHoy: totalTomasHoy > 0 ? Math.round((completadasHoy / totalTomasHoy) * 100) : 0,
+        tomasPorMedicamento
+      }
+    });
+  } catch (error) {
+    console.error('Error en GET /tomas/hoy:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ==================== TOMAS ENDPOINT CORREGIDO ====================
 app.post('/medicamentos/:medicamentoId/tomas', verifyToken, async (req, res) => {
   try {
     const { fecha, hora, completado } = req.body;
@@ -843,16 +908,14 @@ app.post('/medicamentos/:medicamentoId/tomas', verifyToken, async (req, res) => 
       });
     }
 
-    // Usar la zona horaria del usuario (header X-Timezone), no la del servidor.
-    // Antes se usaba `new Date(fecha + 'T' + hora)`, que Node interpreta en la
-    // zona horaria del SERVIDOR (normalmente UTC en Render), provocando 400
-    // falsos cuando el usuario está en otra zona horaria.
     const timezone = obtenerTimezone(req);
     const { fecha: hoyStr, hora: horaActualStr } = obtenerAhoraEnZona(timezone);
 
-    const minutosProgramados = minutosDesdeReferencia(fecha, hora);
-    const minutosActuales = minutosDesdeReferencia(hoyStr, horaActualStr);
-    const diferenciaMinutos = minutosActuales - minutosProgramados;
+    // ✅ CORREGIDO: Usamos la misma función para ambas fechas con la zona horaria del usuario
+    const fechaProgramada = crearFechaLocal(fecha, hora, timezone);
+    const fechaActual = crearFechaLocal(hoyStr, horaActualStr, timezone);
+    
+    const diferenciaMinutos = (fechaActual.getTime() - fechaProgramada.getTime()) / 60000;
 
     if (diferenciaMinutos < 0) {
       return res.status(400).json({
@@ -863,7 +926,7 @@ app.post('/medicamentos/:medicamentoId/tomas', verifyToken, async (req, res) => 
     if (diferenciaMinutos > MARGEN_TOMA_MINUTOS) {
       return res.status(400).json({
         success: false,
-        error: 'Ya pasó el margen de 30 minutos para registrar esta toma'
+        error: `Ya pasó el margen de ${MARGEN_TOMA_MINUTOS} minutos para registrar esta toma`
       });
     }
 
