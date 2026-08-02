@@ -35,6 +35,15 @@ const verifyToken = (req, res, next) => {
   }
 };
 
+// ✅ NUEVO: normaliza términos con letras repetidas exageradamente
+// Ej: "Cardiologiaaaaaaaaaaaaa" -> "Cardiologiaa"
+// Colapsa cualquier letra repetida 3+ veces seguidas a solo 2 repeticiones,
+// para que quede dentro del alcance de fuzziness:2 en Elasticsearch.
+function normalizarTermino(termino) {
+  if (!termino) return termino;
+  return termino.replace(/(.)\1{2,}/g, '$1$1');
+}
+
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', service: 'search-service' });
 });
@@ -42,10 +51,14 @@ app.get('/health', (req, res) => {
 // ==================== BÚSQUEDA TOLERANTE (SIN LÍMITE DE ERRORES) ====================
 app.post('/search/modulo', verifyToken, async (req, res) => {
   try {
-    const { modulo, termino, filtros = {} } = req.body;
+    const { modulo, filtros = {} } = req.body;
     const usuarioId = req.usuario_id;
 
-    console.log(`🔍 Buscando en ${modulo}: "${termino}" (usuario: ${usuarioId})`);
+    // ✅ Normalizamos el término antes de usarlo en cualquier query
+    const terminoOriginal = req.body.termino;
+    const termino = normalizarTermino(terminoOriginal);
+
+    console.log(`🔍 Buscando en ${modulo}: "${terminoOriginal}" (normalizado: "${termino}") (usuario: ${usuarioId})`);
 
     const camposPorModulo = {
       citas: ['titulo', 'especialidad', 'lugar', 'notas'],
@@ -171,10 +184,14 @@ app.post('/search/modulo', verifyToken, async (req, res) => {
 // BÚSQUEDA GLOBAL
 app.post('/search/global', verifyToken, async (req, res) => {
   try {
-    const { termino, limite = 20 } = req.body;
+    const { limite = 20 } = req.body;
     const usuarioId = req.usuario_id;
 
-    console.log(`🔍 Búsqueda global: "${termino}" (usuario: ${usuarioId})`);
+    // ✅ Normalizamos el término también en la búsqueda global
+    const terminoOriginal = req.body.termino;
+    const termino = normalizarTermino(terminoOriginal);
+
+    console.log(`🔍 Búsqueda global: "${terminoOriginal}" (normalizado: "${termino}") (usuario: ${usuarioId})`);
 
     const results = await esClient.search({
       index: 'selkalis_*',
@@ -311,10 +328,10 @@ async function crearIndices() {
 
   for (const idx of indices) {
     const indexName = `selkalis_${idx}`;
-    
+
     try {
       const exists = await esClient.indices.exists({ index: indexName });
-      
+
       if (!exists) {
         await esClient.indices.create({
           index: indexName,
