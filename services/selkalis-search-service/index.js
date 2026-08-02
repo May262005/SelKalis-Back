@@ -338,6 +338,12 @@ function campoTextoConAutocomplete() {
 }
 
 const ANALYSIS_SETTINGS = {
+  char_filter: {
+    dot_to_space: {
+      type: 'mapping',
+      mappings: ['.=> ']
+    }
+  },
   filter: {
     spanish_stop: {
       type: 'stop',
@@ -357,11 +363,13 @@ const ANALYSIS_SETTINGS = {
     spanish_analyzer: {
       type: 'custom',
       tokenizer: 'standard',
+      char_filter: ['dot_to_space'],
       filter: ['lowercase', 'asciifolding', 'spanish_stop', 'spanish_stemmer']
     },
     autocomplete_index_analyzer: {
       type: 'custom',
       tokenizer: 'standard',
+      char_filter: ['dot_to_space'],
       filter: ['lowercase', 'asciifolding', 'autocomplete_filter']
     },
     autocomplete_search_analyzer: {
@@ -469,9 +477,7 @@ async function crearIndices() {
           }
         });
       }
-    } catch (error) {
-      // Silencio
-    }
+    } catch (error) {}
   }
 }
 
