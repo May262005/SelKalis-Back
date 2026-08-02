@@ -41,6 +41,19 @@ function normalizarTermino(termino) {
   return termino.replace(/(.)\1{2,}/g, '$1$1');
 }
 
+// ✅ FIX: el wildcard de Elasticsearch NO analiza el texto (no lo pasa por el
+// analizador que pone todo en minúsculas y quita acentos). Si buscas "Dr" con
+// mayúscula pero el índice guardó el token en minúsculas ("dr"), el wildcard
+// nunca hace match. Por eso normalizamos a minúsculas y sin acentos aquí mismo,
+// para que el wildcard compare "manzana con manzana".
+function normalizarParaWildcard(termino) {
+  if (!termino) return termino;
+  return termino
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, ''); // quita acentos/diacríticos
+}
+
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', service: 'search-service' });
 });
@@ -53,8 +66,9 @@ app.post('/search/modulo', verifyToken, async (req, res) => {
 
     const terminoOriginal = req.body.termino;
     const termino = normalizarTermino(terminoOriginal);
+    const terminoWildcard = normalizarParaWildcard(termino);
 
-    console.log(`🔍 Buscando en ${modulo}: "${terminoOriginal}" (normalizado: "${termino}") (usuario: ${usuarioId})`);
+    console.log(`🔍 Buscando en ${modulo}: "${terminoOriginal}" (normalizado: "${termino}", wildcard: "${terminoWildcard}") (usuario: ${usuarioId})`);
 
     const camposPorModulo = {
       citas: ['titulo', 'especialidad', 'lugar', 'notas'],
@@ -68,7 +82,7 @@ app.post('/search/modulo', verifyToken, async (req, res) => {
 
     const shouldQueries = [];
 
-    // 1. Fuzzy search con fuzziness "AUTO" - ✅ OPERADOR 'or' para que coincida con ALGUNA palabra
+    // 1. Fuzzy search con fuzziness "AUTO" - operador 'or' para que coincida con ALGUNA palabra
     for (const campo of campos) {
       shouldQueries.push({
         match: {
@@ -76,32 +90,34 @@ app.post('/search/modulo', verifyToken, async (req, res) => {
             query: termino,
             fuzziness: 'AUTO',
             prefix_length: 1,
-            operator: 'or', // ✅ CAMBIADO: antes era 'and'
+            operator: 'or',
             boost: 3
           }
         }
       });
     }
 
-    // 2. Coincidencia parcial con wildcard
+    // 2. Coincidencia parcial con wildcard - ✅ AHORA usa el término normalizado
+    //    (minúsculas, sin acentos) para que sí matchee contra los tokens indexados.
     for (const campo of campos) {
       shouldQueries.push({
         wildcard: {
           [campo]: {
-            value: `*${termino}*`,
+            value: `*${terminoWildcard}*`,
+            case_insensitive: true, // por si acaso, doble seguro (ES >= 7.10)
             boost: 2
           }
         }
       });
     }
 
-    // 3. Coincidencia exacta - ✅ TAMBIÉN con 'or'
+    // 3. Coincidencia exacta
     for (const campo of campos) {
       shouldQueries.push({
         match: {
           [campo]: {
             query: termino,
-            operator: 'or', // ✅ CAMBIADO: antes era 'and'
+            operator: 'or',
             boost: 5
           }
         }
@@ -145,6 +161,8 @@ app.post('/search/modulo', verifyToken, async (req, res) => {
       }
     });
 
+    console.log(`   ↳ ${results.hits.total.value} resultado(s) encontrados en ${index}`);
+
     const resultados = results.hits.hits.map(hit => {
       const source = hit._source;
       return {
@@ -185,8 +203,9 @@ app.post('/search/global', verifyToken, async (req, res) => {
 
     const terminoOriginal = req.body.termino;
     const termino = normalizarTermino(terminoOriginal);
+    const terminoWildcard = normalizarParaWildcard(termino);
 
-    console.log(`🔍 Búsqueda global: "${terminoOriginal}" (normalizado: "${termino}") (usuario: ${usuarioId})`);
+    console.log(`🔍 Búsqueda global: "${terminoOriginal}" (normalizado: "${termino}", wildcard: "${terminoWildcard}") (usuario: ${usuarioId})`);
 
     const results = await esClient.search({
       index: 'selkalis_*',
@@ -207,14 +226,15 @@ app.post('/search/global', verifyToken, async (req, res) => {
                   fields: ['*'],
                   fuzziness: 'AUTO',
                   prefix_length: 1,
-                  operator: 'or', // ✅ CAMBIADO: antes era 'and'
+                  operator: 'or',
                   boost: 3
                 }
               },
               {
                 wildcard: {
                   titulo: {
-                    value: `*${termino}*`,
+                    value: `*${terminoWildcard}*`,
+                    case_insensitive: true,
                     boost: 2
                   }
                 }
@@ -222,7 +242,8 @@ app.post('/search/global', verifyToken, async (req, res) => {
               {
                 wildcard: {
                   nombre: {
-                    value: `*${termino}*`,
+                    value: `*${terminoWildcard}*`,
+                    case_insensitive: true,
                     boost: 2
                   }
                 }
@@ -285,7 +306,7 @@ app.post('/search/indexar', verifyToken, async (req, res) => {
       }
     });
 
-    console.log(`✅ Indexado en ${modulo}: ${documento.id}`);
+    console.log(`✅ Indexado en ${modulo}: ${documento.id} (usuario: ${usuarioId})`);
     res.json({ success: true, message: 'Documento indexado correctamente' });
 
   } catch (error) {
@@ -321,6 +342,11 @@ app.delete('/search/:modulo/:id', verifyToken, async (req, res) => {
 });
 
 // ==================== CREAR ÍNDICES ====================
+// ✅ FIX: el analizador "spanish" de Elasticsearch NO incluye asciifolding,
+// es decir "González" se indexa como "gonzález" (con acento) y NO como
+// "gonzalez". Esto hacía fallar búsquedas sin acento en casos límite.
+// Ahora usamos un analizador personalizado que: minúsculas -> quita acentos
+// -> aplica el stemmer español -> quita stopwords en español.
 async function crearIndices() {
   const indices = ['citas', 'tratamientos', 'medicamentos', 'estudios', 'documentos'];
 
@@ -336,9 +362,26 @@ async function crearIndices() {
           body: {
             settings: {
               analysis: {
+                filter: {
+                  spanish_stop: {
+                    type: 'stop',
+                    stopwords: '_spanish_'
+                  },
+                  spanish_stemmer: {
+                    type: 'stemmer',
+                    language: 'light_spanish'
+                  }
+                },
                 analyzer: {
                   spanish_analyzer: {
-                    type: 'spanish'
+                    type: 'custom',
+                    tokenizer: 'standard',
+                    filter: [
+                      'lowercase',
+                      'asciifolding', // ✅ quita acentos: "González" -> "gonzalez"
+                      'spanish_stop',
+                      'spanish_stemmer'
+                    ]
                   }
                 }
               }
