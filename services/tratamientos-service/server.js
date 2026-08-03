@@ -8,7 +8,6 @@ require('dotenv').config({ path: path.join(__dirname, '../../.env') });
 const app = express();
 const PORT = process.env.TRATAMIENTOS_SERVICE_PORT || 3002;
 
-// ==================== CORS CONFIGURACIÓN ====================
 const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:4200').replace(/\/$/, '');
 const allowedOrigins = [frontendUrl, frontendUrl + '/'];
 
@@ -51,12 +50,10 @@ const verifyToken = (req, res, next) => {
   }
 };
 
-// ==================== HEALTH CHECK ====================
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', service: 'tratamientos-service' });
 });
 
-// ==================== ZONA HORARIA CORREGIDA ====================
 function obtenerTimezone(req) {
   const tz = req.headers['x-timezone'];
   if (!tz) return 'UTC';
@@ -81,7 +78,8 @@ function obtenerAhoraEnZona(timeZone) {
     hour12: false
   };
   
-  const formatter = new Intl.DateTimeFormat('en-US', options);
+  // 🔥 UNICO CAMBIO: 'es-MX' en lugar de 'en-US'
+  const formatter = new Intl.DateTimeFormat('es-MX', options);
   const parts = formatter.formatToParts(ahora);
   
   let year = '', month = '', day = '', hour = '', minute = '';
@@ -849,7 +847,7 @@ app.patch('/medicamentos/:id/reactivar', verifyToken, async (req, res) => {
   }
 });
 
-// ==================== ENDPOINT: TOMAS DEL DÍA CORREGIDO ====================
+// ==================== TOMAS DEL DÍA ENDPOINT ====================
 app.get('/tomas/hoy', verifyToken, async (req, res) => {
   try {
     const timezone = obtenerTimezone(req);
@@ -877,8 +875,6 @@ app.get('/tomas/hoy', verifyToken, async (req, res) => {
         const tomas = med.tomas || [];
         const tomasDeHoy = tomas.filter((t) => t.fecha === hoyStr);
         const completadasDeHoy = tomasDeHoy.filter((t) => t.completado === true);
-        
-        console.log(`💊 ${med.nombre}: ${tomasDeHoy.length} tomas hoy, ${completadasDeHoy.length} completadas`);
         
         totalTomasHoy += tomasDeHoy.length;
         completadasHoy += completadasDeHoy.length;
@@ -913,7 +909,7 @@ app.get('/tomas/hoy', verifyToken, async (req, res) => {
   }
 });
 
-// ==================== TOMAS ENDPOINT CORREGIDO ====================
+// ==================== MARCAR TOMA ENDPOINT ====================
 app.post('/medicamentos/:medicamentoId/tomas', verifyToken, async (req, res) => {
   try {
     const { fecha, hora, completado } = req.body;
