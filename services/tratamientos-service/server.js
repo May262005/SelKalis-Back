@@ -56,7 +56,7 @@ app.get('/health', (req, res) => {
   res.json({ status: 'OK', service: 'tratamientos-service' });
 });
 
-// ==================== ZONA HORARIA ====================
+// ==================== ZONA HORARIA CORREGIDA ====================
 function obtenerTimezone(req) {
   const tz = req.headers['x-timezone'];
   if (!tz) return 'UTC';
@@ -70,39 +70,53 @@ function obtenerTimezone(req) {
 
 function obtenerAhoraEnZona(timeZone) {
   const ahora = new Date();
-  const dtf = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    hour12: false,
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit'
-  });
-  const parts = dtf.formatToParts(ahora).reduce((acc, p) => {
-    if (p.type !== 'literal') acc[p.type] = p.value;
-    return acc;
-  }, {});
-  const hora24 = parts.hour === '24' ? '00' : parts.hour;
-  return {
-    fecha: `${parts.year}-${parts.month}-${parts.day}`,
-    hora: `${hora24}:${parts.minute}`
+  
+  const options = {
+    timeZone: timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
   };
+  
+  const formatter = new Intl.DateTimeFormat('en-US', options);
+  const parts = formatter.formatToParts(ahora);
+  
+  let year = '', month = '', day = '', hour = '', minute = '';
+  
+  parts.forEach(p => {
+    if (p.type === 'year') year = p.value;
+    if (p.type === 'month') month = p.value;
+    if (p.type === 'day') day = p.value;
+    if (p.type === 'hour') hour = p.value;
+    if (p.type === 'minute') minute = p.value;
+  });
+  
+  if (hour === '24') hour = '00';
+  
+  const fecha = `${year}-${month}-${day}`;
+  const hora = `${hour}:${minute}`;
+  
+  return { fecha, hora };
 }
 
-// ==================== CREAR FECHA LOCAL CORREGIDA ====================
 function crearFechaLocal(fechaStr, horaStr, timezone) {
-  const [y, m, d] = fechaStr.split('-').map(Number);
-  const [h, min] = horaStr.split(':').map(Number);
-  
-  // Crear fecha en UTC pero con los valores de la zona horaria del usuario
-  const date = new Date(Date.UTC(y, m - 1, d, h, min));
-  
-  // Si tenemos timezone, ajustamos
-  if (timezone && timezone !== 'UTC') {
-    const userDate = new Date(date.toLocaleString('en-US', { timeZone: timezone }));
-    const userOffset = userDate.getTimezoneOffset();
-    const currentOffset = date.getTimezoneOffset();
-    const diffMinutes = userOffset - currentOffset;
-    date.setMinutes(date.getMinutes() + diffMinutes);
+  if (!timezone || timezone === 'UTC') {
+    const [y, m, d] = fechaStr.split('-').map(Number);
+    const [h, min] = horaStr.split(':').map(Number);
+    return new Date(Date.UTC(y, m - 1, d, h, min));
   }
+  
+  const fechaCompleta = `${fechaStr}T${horaStr}:00`;
+  const date = new Date(fechaCompleta);
+  
+  const userDate = new Date(date.toLocaleString('en-US', { timeZone: timezone }));
+  const userOffset = userDate.getTimezoneOffset();
+  const currentOffset = date.getTimezoneOffset();
+  const diffMinutes = userOffset - currentOffset;
+  date.setMinutes(date.getMinutes() + diffMinutes);
   
   return date;
 }
@@ -155,7 +169,6 @@ function generarTomas(fechaInicio, duracionDias, frecuencia, horaInicio) {
   return tomas;
 }
 
-// ==================== RECALCULAR FECHA FIN ====================
 async function recalcularFechaFinTratamiento(tratamientoId, supabaseClient) {
   const { data: medicamentos, error } = await supabaseClient
     .from('medicamentos')
@@ -836,13 +849,14 @@ app.patch('/medicamentos/:id/reactivar', verifyToken, async (req, res) => {
   }
 });
 
-// ==================== NUEVO ENDPOINT: TOMAS DEL DÍA ====================
+// ==================== ENDPOINT: TOMAS DEL DÍA CORREGIDO ====================
 app.get('/tomas/hoy', verifyToken, async (req, res) => {
   try {
     const timezone = obtenerTimezone(req);
     const { fecha: hoyStr } = obtenerAhoraEnZona(timezone);
     
-    // Obtener todos los tratamientos activos del usuario
+    console.log(`📅 Buscando tomas para: ${hoyStr} (zona: ${timezone})`);
+    
     const { data: tratamientos, error } = await supabase
       .from('tratamientos')
       .select(`*, medicamentos (*)`)
@@ -864,6 +878,8 @@ app.get('/tomas/hoy', verifyToken, async (req, res) => {
         const tomasDeHoy = tomas.filter((t) => t.fecha === hoyStr);
         const completadasDeHoy = tomasDeHoy.filter((t) => t.completado === true);
         
+        console.log(`💊 ${med.nombre}: ${tomasDeHoy.length} tomas hoy, ${completadasDeHoy.length} completadas`);
+        
         totalTomasHoy += tomasDeHoy.length;
         completadasHoy += completadasDeHoy.length;
         
@@ -878,6 +894,8 @@ app.get('/tomas/hoy', verifyToken, async (req, res) => {
         }
       }
     }
+
+    console.log(`📊 Total: ${totalTomasHoy} tomas, ${completadasHoy} completadas`);
 
     res.json({
       success: true,
@@ -911,11 +929,16 @@ app.post('/medicamentos/:medicamentoId/tomas', verifyToken, async (req, res) => 
     const timezone = obtenerTimezone(req);
     const { fecha: hoyStr, hora: horaActualStr } = obtenerAhoraEnZona(timezone);
 
-    // ✅ CORREGIDO: Usamos la misma función para ambas fechas con la zona horaria del usuario
+    console.log(`🕐 Fecha programada: ${fecha} ${hora}`);
+    console.log(`🕐 Fecha actual: ${hoyStr} ${horaActualStr}`);
+    console.log(`🕐 Zona horaria: ${timezone}`);
+
     const fechaProgramada = crearFechaLocal(fecha, hora, timezone);
     const fechaActual = crearFechaLocal(hoyStr, horaActualStr, timezone);
     
     const diferenciaMinutos = (fechaActual.getTime() - fechaProgramada.getTime()) / 60000;
+    
+    console.log(`⏱️ Diferencia: ${diferenciaMinutos} minutos`);
 
     if (diferenciaMinutos < 0) {
       return res.status(400).json({
@@ -970,6 +993,9 @@ app.post('/medicamentos/:medicamentoId/tomas', verifyToken, async (req, res) => 
       .select();
 
     if (error) throw error;
+    
+    console.log(`✅ Toma registrada: ${fecha} ${hora}`);
+    
     res.json({ success: true, data: data && data.length > 0 ? data[0] : null });
   } catch (error) {
     console.error('Error marcando toma:', error);
@@ -1015,3 +1041,5 @@ app.listen(PORT, () => {
   console.log(`Tratamientos Service running on port ${PORT}`);
   console.log(`CORS permitido para: ${frontendUrl}`);
 });
+
+module.exports = app;
