@@ -54,19 +54,32 @@ app.get('/health', (req, res) => {
   res.json({ status: 'OK', service: 'tratamientos-service' });
 });
 
+// ==================== ZONA HORARIA CORREGIDA ====================
 function obtenerTimezone(req) {
-  const tz = req.headers['x-timezone'];
-  if (!tz) return 'UTC';
+  let tz = req.headers['x-timezone'];
+  
+  console.log('🔍 Header X-Timezone recibido:', tz);
+  
+  // Si no viene o es GMT/UTC, usar America/Mexico_City
+  if (!tz || tz === 'GMT' || tz === 'UTC') {
+    console.log('⚠️ Usando America/Mexico_City por defecto');
+    tz = 'America/Mexico_City';
+  }
+  
   try {
     Intl.DateTimeFormat('en-US', { timeZone: tz });
     return tz;
   } catch {
+    console.log(`⚠️ Zona horaria inválida: ${tz}, usando UTC`);
     return 'UTC';
   }
 }
 
 function obtenerAhoraEnZona(timeZone) {
   const ahora = new Date();
+  
+  console.log(`🕐 Fecha actual UTC: ${ahora.toISOString()}`);
+  console.log(`🕐 Zona horaria solicitada: ${timeZone}`);
   
   const options = {
     timeZone: timeZone,
@@ -78,7 +91,6 @@ function obtenerAhoraEnZona(timeZone) {
     hour12: false
   };
   
-  // 🔥 UNICO CAMBIO: 'es-MX' en lugar de 'en-US'
   const formatter = new Intl.DateTimeFormat('es-MX', options);
   const parts = formatter.formatToParts(ahora);
   
@@ -95,7 +107,9 @@ function obtenerAhoraEnZona(timeZone) {
   if (hour === '24') hour = '00';
   
   const fecha = `${year}-${month}-${day}`;
-  const hora = `${hour}:${minute}`;
+  const hora = `${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`;
+  
+  console.log(`📅 Fecha en zona ${timeZone}: ${fecha} ${hora}`);
   
   return { fecha, hora };
 }
@@ -847,13 +861,16 @@ app.patch('/medicamentos/:id/reactivar', verifyToken, async (req, res) => {
   }
 });
 
-// ==================== TOMAS DEL DÍA ENDPOINT ====================
+// ==================== ENDPOINT: TOMAS DEL DÍA CORREGIDO ====================
 app.get('/tomas/hoy', verifyToken, async (req, res) => {
   try {
-    const timezone = obtenerTimezone(req);
-    const { fecha: hoyStr } = obtenerAhoraEnZona(timezone);
+    console.log('📥 ===== NUEVA SOLICITUD /tomas/hoy =====');
     
-    console.log(`📅 Buscando tomas para: ${hoyStr} (zona: ${timezone})`);
+    const timezone = obtenerTimezone(req);
+    console.log('🕐 Zona horaria final:', timezone);
+    
+    const { fecha: hoyStr } = obtenerAhoraEnZona(timezone);
+    console.log(`📅 Buscando tomas para: ${hoyStr}`);
     
     const { data: tratamientos, error } = await supabase
       .from('tratamientos')
@@ -867,6 +884,8 @@ app.get('/tomas/hoy', verifyToken, async (req, res) => {
     let completadasHoy = 0;
     const tomasPorMedicamento = [];
 
+    console.log(`📊 Procesando ${tratamientos?.length || 0} tratamientos`);
+
     for (const tratamiento of tratamientos || []) {
       const medicamentos = tratamiento.medicamentos || [];
       for (const med of medicamentos) {
@@ -875,6 +894,8 @@ app.get('/tomas/hoy', verifyToken, async (req, res) => {
         const tomas = med.tomas || [];
         const tomasDeHoy = tomas.filter((t) => t.fecha === hoyStr);
         const completadasDeHoy = tomasDeHoy.filter((t) => t.completado === true);
+        
+        console.log(`   💊 ${med.nombre}: ${tomasDeHoy.length} tomas hoy (${completadasDeHoy.length} completadas)`);
         
         totalTomasHoy += tomasDeHoy.length;
         completadasHoy += completadasDeHoy.length;
@@ -891,7 +912,8 @@ app.get('/tomas/hoy', verifyToken, async (req, res) => {
       }
     }
 
-    console.log(`📊 Total: ${totalTomasHoy} tomas, ${completadasHoy} completadas`);
+    console.log(`📊 TOTAL: ${totalTomasHoy} tomas, ${completadasHoy} completadas`);
+    console.log('📥 ===== FIN SOLICITUD =====');
 
     res.json({
       success: true,
@@ -904,7 +926,7 @@ app.get('/tomas/hoy', verifyToken, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error en GET /tomas/hoy:', error);
+    console.error('❌ Error en GET /tomas/hoy:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
