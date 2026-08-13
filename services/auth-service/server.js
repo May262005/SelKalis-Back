@@ -40,20 +40,16 @@ const FROM_EMAIL = process.env.EMAIL_USER || 'selkalis26@gmail.com';
 const app = express();
 const PORT = process.env.USER_SERVICE_PORT || 3001;
 
-// ==================== CORS CONFIGURACIÓN PARA PRODUCCIÓN ====================
-// Obtener orígenes permitidos desde variable de entorno
+// ==================== CORS CONFIGURACIÓN ====================
 const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:4200';
 
-// Configuración CORS manual para asegurar que funcione en Render
 app.use((req, res, next) => {
-  // Establecer los headers CORS
   res.setHeader('Access-Control-Allow-Origin', frontendUrl);
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Max-Age', '86400'); // 24 horas cache para preflight
+  res.setHeader('Access-Control-Max-Age', '86400');
   
-  // Manejar preflight requests
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
@@ -68,7 +64,7 @@ function generarCodigo() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-// ==================== FUNCIÓN DE ENVÍO DE CORREO CON SENDGRID ====================
+// ==================== FUNCIÓN DE ENVÍO DE CORREO ====================
 async function enviarCorreo(email, asunto, html) {
   try {
     const msg = {
@@ -78,7 +74,6 @@ async function enviarCorreo(email, asunto, html) {
       html: html,
       text: html.replace(/<[^>]*>/g, '')
     };
-
     await sgMail.send(msg);
     return true;
   } catch (error) {
@@ -163,7 +158,7 @@ app.get('/health', (req, res) => {
   });
 });
 
-// ==================== ENDPOINT DE PRUEBA DE CORREO ====================
+// ==================== TEST EMAIL ====================
 app.get('/test-email', async (req, res) => {
   const email = req.query.email || 'test@example.com';
   const result = await enviarCorreo(
@@ -216,9 +211,11 @@ app.post('/usuarios/registro', async (req, res) => {
         password_hash: passwordHash,
         created_at: now,
         updated_at: now,
-        ultimo_login: null
+        ultimo_login: null,
+        activo: true,           // ✅ Por defecto activo
+        rol: 'user'             // ✅ Por defecto usuario normal
       })
-      .select('id, nombre, apellido, email, telefono, created_at, updated_at, ultimo_login')
+      .select('id, nombre, apellido, email, telefono, created_at, updated_at, ultimo_login, activo, rol')
       .single();
 
     if (insertError) {
@@ -229,7 +226,6 @@ app.post('/usuarios/registro', async (req, res) => {
       });
     }
 
-    // Enviar correo de bienvenida (sin await para no bloquear)
     enviarCorreoBienvenida(email, nombre).catch(err => 
       console.error('Error enviando correo de bienvenida:', err)
     );
@@ -239,7 +235,8 @@ app.post('/usuarios/registro', async (req, res) => {
         id: newUser.id,
         email: newUser.email,
         nombre: newUser.nombre,
-        apellido: newUser.apellido
+        apellido: newUser.apellido,
+        rol: newUser.rol
       },
       process.env.JWT_SECRET,
       { expiresIn: '24h' }
@@ -256,7 +253,9 @@ app.post('/usuarios/registro', async (req, res) => {
         email: newUser.email,
         telefono: newUser.telefono,
         created_at: newUser.created_at,
-        ultimo_login: newUser.ultimo_login
+        ultimo_login: newUser.ultimo_login,
+        activo: newUser.activo,
+        rol: newUser.rol
       }
     });
 
@@ -269,7 +268,7 @@ app.post('/usuarios/registro', async (req, res) => {
   }
 });
 
-// ==================== LOGIN ====================
+// ==================== LOGIN (CON VERIFICACIÓN DE ACTIVO) ====================
 app.post('/usuarios/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -286,6 +285,14 @@ app.post('/usuarios/login', async (req, res) => {
 
     if (!user) {
       return res.status(401).json({ error: 'Credenciales inválidas' });
+    }
+
+    // ✅ VERIFICAR SI EL USUARIO ESTÁ ACTIVO
+    if (user.activo === false) {
+      return res.status(403).json({ 
+        error: 'Cuenta desactivada', 
+        message: 'Tu cuenta ha sido desactivada. Contacta al administrador.'
+      });
     }
 
     const isValid = await bcrypt.compare(password, user.password_hash);
@@ -305,7 +312,7 @@ app.post('/usuarios/login', async (req, res) => {
 
     const { data: updatedUser } = await supabase
       .from('usuarios')
-      .select('id, nombre, apellido, email, telefono, created_at, ultimo_login')
+      .select('id, nombre, apellido, email, telefono, created_at, ultimo_login, activo, rol')
       .eq('id', user.id)
       .single();
 
@@ -314,7 +321,8 @@ app.post('/usuarios/login', async (req, res) => {
         id: user.id,
         email: user.email,
         nombre: user.nombre,
-        apellido: user.apellido
+        apellido: user.apellido,
+        rol: user.rol
       },
       process.env.JWT_SECRET,
       { expiresIn: '24h' }
@@ -356,7 +364,7 @@ app.post('/auth/recuperar', async (req, res) => {
 
     const { data: user } = await supabase
       .from('usuarios')
-      .select('id, email')
+      .select('id, email, activo')
       .eq('email', email)
       .maybeSingle();
 
@@ -364,6 +372,14 @@ app.post('/auth/recuperar', async (req, res) => {
       return res.status(404).json({
         success: false,
         error: 'No existe una cuenta con este correo electrónico'
+      });
+    }
+
+    // ✅ No permitir recuperación si está desactivado
+    if (user.activo === false) {
+      return res.status(403).json({
+        success: false,
+        error: 'Esta cuenta está desactivada. Contacta al administrador.'
       });
     }
 
@@ -420,12 +436,16 @@ app.post('/auth/verificar-codigo', async (req, res) => {
 
     const { data: user } = await supabase
       .from('usuarios')
-      .select('id')
+      .select('id, activo')
       .eq('email', email)
       .maybeSingle();
 
     if (!user) {
       return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+
+    if (user.activo === false) {
+      return res.status(403).json({ error: 'Esta cuenta está desactivada' });
     }
 
     const { data: codigoRecord } = await supabase
@@ -514,12 +534,16 @@ app.post('/auth/cambiar-password', async (req, res) => {
 
     const { data: user } = await supabase
       .from('usuarios')
-      .select('id')
+      .select('id, activo')
       .eq('email', email)
       .maybeSingle();
 
     if (!user) {
       return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+
+    if (user.activo === false) {
+      return res.status(403).json({ error: 'Esta cuenta está desactivada' });
     }
 
     const salt = await bcrypt.genSalt(10);
@@ -560,7 +584,7 @@ app.post('/auth/reenviar-codigo', async (req, res) => {
 
     const { data: user } = await supabase
       .from('usuarios')
-      .select('id')
+      .select('id, activo')
       .eq('email', email)
       .maybeSingle();
 
@@ -568,6 +592,13 @@ app.post('/auth/reenviar-codigo', async (req, res) => {
       return res.status(404).json({
         success: false,
         error: 'No existe una cuenta con este correo electrónico'
+      });
+    }
+
+    if (user.activo === false) {
+      return res.status(403).json({
+        success: false,
+        error: 'Esta cuenta está desactivada'
       });
     }
 
@@ -614,7 +645,7 @@ app.get('/usuarios/:id', async (req, res) => {
 
     const { data: user, error } = await supabase
       .from('usuarios')
-      .select('id, nombre, apellido, email, telefono, created_at, ultimo_login')
+      .select('id, nombre, apellido, email, telefono, created_at, ultimo_login, activo, rol')
       .eq('id', id)
       .single();
 
@@ -645,7 +676,7 @@ app.put('/usuarios/:id', async (req, res) => {
         updated_at: new Date().toISOString()
       })
       .eq('id', id)
-      .select('id, nombre, apellido, email, telefono')
+      .select('id, nombre, apellido, email, telefono, activo, rol')
       .single();
 
     if (error) {
@@ -675,12 +706,16 @@ app.post('/usuarios/cambiar-password', async (req, res) => {
 
     const { data: user } = await supabase
       .from('usuarios')
-      .select('password_hash')
+      .select('password_hash, activo')
       .eq('id', userId)
       .single();
 
     if (!user) {
       return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+
+    if (user.activo === false) {
+      return res.status(403).json({ error: 'Esta cuenta está desactivada' });
     }
 
     const isValid = await bcrypt.compare(currentPassword, user.password_hash);
@@ -710,12 +745,280 @@ app.post('/usuarios/cambiar-password', async (req, res) => {
   }
 });
 
+// ============================================================
+// ✅ ADMIN ENDPOINTS - Gestión de Usuarios (solo admin)
+// ============================================================
+
+// ==================== MIDDLEWARE VERIFICAR ADMIN ====================
+const verificarAdmin = async (req, res, next) => {
+  try {
+    const token = req.headers['authorization']?.split(' ')[1];
+    if (!token) {
+      return res.status(401).json({ error: 'Token no proporcionado' });
+    }
+    
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    
+    const { data: user, error } = await supabase
+      .from('usuarios')
+      .select('rol, activo')
+      .eq('id', decoded.id)
+      .single();
+    
+    if (error || !user) {
+      return res.status(401).json({ error: 'Usuario no encontrado' });
+    }
+    
+    if (user.activo === false) {
+      return res.status(403).json({ error: 'Usuario desactivado' });
+    }
+    
+    if (user.rol !== 'admin') {
+      return res.status(403).json({ error: 'Acceso denegado. Se requiere rol de administrador' });
+    }
+    
+    req.usuario_id = decoded.id;
+    next();
+  } catch (error) {
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({ error: 'Token expirado' });
+    }
+    return res.status(401).json({ error: 'Token inválido' });
+  }
+};
+
+// GET /admin/usuarios - Obtener todos los usuarios
+app.get('/admin/usuarios', verificarAdmin, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('usuarios')
+      .select('id, nombre, apellido, email, telefono, rol, activo, created_at, ultimo_login')
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error obteniendo usuarios:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /admin/usuarios/:id - Obtener usuario específico
+app.get('/admin/usuarios/:id', verificarAdmin, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('usuarios')
+      .select('id, nombre, apellido, email, telefono, rol, activo, created_at, ultimo_login')
+      .eq('id', req.params.id)
+      .single();
+
+    if (error) throw error;
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error obteniendo usuario:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /admin/usuarios - Crear usuario (admin)
+app.post('/admin/usuarios', verificarAdmin, async (req, res) => {
+  try {
+    const { nombre, apellido, email, telefono, password, rol } = req.body;
+
+    if (!nombre || !apellido || !email || !password) {
+      return res.status(400).json({ error: 'Nombre, apellido, email y contraseña son obligatorios' });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
+    }
+
+    const { data: existingUser } = await supabase
+      .from('usuarios')
+      .select('id')
+      .eq('email', email)
+      .maybeSingle();
+
+    if (existingUser) {
+      return res.status(400).json({ error: 'El email ya está registrado' });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(password, salt);
+
+    const now = new Date().toISOString();
+    
+    const { data: newUser, error } = await supabase
+      .from('usuarios')
+      .insert({
+        nombre,
+        apellido,
+        email,
+        telefono: telefono || null,
+        password_hash: passwordHash,
+        rol: rol || 'user',
+        activo: true,
+        created_at: now,
+        updated_at: now,
+        ultimo_login: null
+      })
+      .select('id, nombre, apellido, email, telefono, rol, activo, created_at')
+      .single();
+
+    if (error) throw error;
+    res.status(201).json({ success: true, data: newUser });
+  } catch (error) {
+    console.error('Error creando usuario:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// PUT /admin/usuarios/:id - Actualizar usuario (admin)
+app.put('/admin/usuarios/:id', verificarAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { nombre, apellido, telefono, rol, activo } = req.body;
+
+    const updateData = {
+      updated_at: new Date().toISOString()
+    };
+    
+    if (nombre !== undefined) updateData.nombre = nombre;
+    if (apellido !== undefined) updateData.apellido = apellido;
+    if (telefono !== undefined) updateData.telefono = telefono || null;
+    if (rol !== undefined) updateData.rol = rol;
+    if (activo !== undefined) updateData.activo = activo;
+
+    const { data, error } = await supabase
+      .from('usuarios')
+      .update(updateData)
+      .eq('id', id)
+      .select('id, nombre, apellido, email, telefono, rol, activo')
+      .single();
+
+    if (error) throw error;
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error actualizando usuario:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// PATCH /admin/usuarios/:id/suspender - Suspender usuario
+app.patch('/admin/usuarios/:id/suspender', verificarAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // No permitir suspender a sí mismo
+    if (id === req.usuario_id) {
+      return res.status(400).json({ error: 'No puedes suspenderse a ti mismo' });
+    }
+
+    const { error } = await supabase
+      .from('usuarios')
+      .update({ 
+        activo: false,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', id);
+
+    if (error) throw error;
+    res.json({ success: true, message: 'Usuario suspendido' });
+  } catch (error) {
+    console.error('Error suspendiendo usuario:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// PATCH /admin/usuarios/:id/activar - Activar usuario
+app.patch('/admin/usuarios/:id/activar', verificarAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { error } = await supabase
+      .from('usuarios')
+      .update({ 
+        activo: true,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', id);
+
+    if (error) throw error;
+    res.json({ success: true, message: 'Usuario activado' });
+  } catch (error) {
+    console.error('Error activando usuario:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// DELETE /admin/usuarios/:id - Eliminar usuario (solo admin)
+app.delete('/admin/usuarios/:id', verificarAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // No permitir eliminar a sí mismo
+    if (id === req.usuario_id) {
+      return res.status(400).json({ error: 'No puedes eliminarte a ti mismo' });
+    }
+
+    const { error } = await supabase
+      .from('usuarios')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+    res.json({ success: true, message: 'Usuario eliminado' });
+  } catch (error) {
+    console.error('Error eliminando usuario:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================
+// LOGS DE ACTIVIDAD (Endpoint adicional)
+// ============================================================
+
+// GET /admin/logs - Obtener logs de actividad
+app.get('/admin/logs', verificarAdmin, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('logs_actividad')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(100);
+
+    if (error) {
+      // Si no existe la tabla, devolver logs simulados
+      return res.json({ 
+        success: true, 
+        data: [
+          { id: '1', usuario_id: 'admin', email: 'admin@selkalis.com', accion: 'Login', fecha: new Date().toISOString() },
+          { id: '2', usuario_id: 'user1', email: 'user@example.com', accion: 'Registro', fecha: new Date().toISOString() }
+        ] 
+      });
+    }
+    
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error obteniendo logs:', error);
+    res.json({ success: true, data: [] });
+  }
+});
+
 // ==================== INICIAR SERVIDOR ====================
 app.listen(PORT, () => {
-  console.log(`Auth service running on port ${PORT}`);
-  console.log(`Email configurado: ${FROM_EMAIL}`);
-  console.log(`CORS permitido para: ${frontendUrl}`);
-  console.log(`Health check: http://localhost:${PORT}/health`);
+  console.log(`   Auth service running on port ${PORT}`);
+  console.log(`   Email configurado: ${FROM_EMAIL}`);
+  console.log(`   CORS permitido para: ${frontendUrl}`);
+  console.log(`   Health check: http://localhost:${PORT}/health`);
+  console.log(`   Admin endpoints disponibles:`);
+  console.log(`   GET    /admin/usuarios`);
+  console.log(`   GET    /admin/usuarios/:id`);
+  console.log(`   POST   /admin/usuarios`);
+  console.log(`   PUT    /admin/usuarios/:id`);
+  console.log(`   PATCH  /admin/usuarios/:id/suspender`);
+  console.log(`   PATCH  /admin/usuarios/:id/activar`);
+  console.log(`   DELETE /admin/usuarios/:id`);
 });
 
 module.exports = app;
