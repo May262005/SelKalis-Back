@@ -49,11 +49,11 @@ app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Max-Age', '86400');
-  
+
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
-  
+
   next();
 });
 
@@ -63,6 +63,67 @@ app.use(express.json());
 function generarCodigo() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
+
+// ==================== MIDDLEWARES DE AUTENTICACIÓN ====================
+
+// Verifica JWT válido (cualquier rol)
+const verificarToken = (req, res, next) => {
+  try {
+    const token = req.headers['authorization']?.split(' ')[1];
+    if (!token) {
+      return res.status(401).json({ error: 'Token no proporcionado' });
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.usuario_id = decoded.id;
+    req.usuario_email = decoded.email;
+    req.usuario_rol = decoded.rol;
+    next();
+  } catch (error) {
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({ error: 'Token expirado' });
+    }
+    return res.status(401).json({ error: 'Token inválido' });
+  }
+};
+
+// Verifica JWT + rol admin
+const verificarAdmin = async (req, res, next) => {
+  try {
+    const token = req.headers['authorization']?.split(' ')[1];
+    if (!token) {
+      return res.status(401).json({ error: 'Token no proporcionado' });
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    const { data: user, error } = await supabase
+      .from('usuarios')
+      .select('rol, activo')
+      .eq('id', decoded.id)
+      .single();
+
+    if (error || !user) {
+      return res.status(401).json({ error: 'Usuario no encontrado' });
+    }
+
+    if (user.activo === false) {
+      return res.status(403).json({ error: 'Usuario desactivado' });
+    }
+
+    if (user.rol !== 'admin') {
+      return res.status(403).json({ error: 'Acceso denegado. Se requiere rol de administrador' });
+    }
+
+    req.usuario_id = decoded.id;
+    next();
+  } catch (error) {
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({ error: 'Token expirado' });
+    }
+    return res.status(401).json({ error: 'Token inválido' });
+  }
+};
 
 // ==================== FUNCIÓN DE ENVÍO DE CORREO ====================
 async function enviarCorreo(email, asunto, html) {
@@ -154,6 +215,7 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'OK',
     service: 'auth-service',
+    etapa2: 'dispositivo + biometria + telefono',
     timestamp: new Date().toISOString()
   });
 });
@@ -166,8 +228,8 @@ app.get('/test-email', async (req, res) => {
     'Test de correo SelKalis',
     '<h1>✅ Test exitoso</h1><p>El correo está funcionando correctamente con SendGrid</p>'
   );
-  res.json({ 
-    success: result, 
+  res.json({
+    success: result,
     message: result ? 'Correo enviado correctamente' : 'Error al enviar correo',
     email: email
   });
@@ -200,7 +262,7 @@ app.post('/usuarios/registro', async (req, res) => {
     const passwordHash = await bcrypt.hash(password, salt);
 
     const now = new Date().toISOString();
-    
+
     const { data: newUser, error: insertError } = await supabase
       .from('usuarios')
       .insert({
@@ -212,8 +274,8 @@ app.post('/usuarios/registro', async (req, res) => {
         created_at: now,
         updated_at: now,
         ultimo_login: null,
-        activo: true,           // ✅ Por defecto activo
-        rol: 'user'             // ✅ Por defecto usuario normal
+        activo: true,
+        rol: 'user'
       })
       .select('id, nombre, apellido, email, telefono, created_at, updated_at, ultimo_login, activo, rol')
       .single();
@@ -226,7 +288,7 @@ app.post('/usuarios/registro', async (req, res) => {
       });
     }
 
-    enviarCorreoBienvenida(email, nombre).catch(err => 
+    enviarCorreoBienvenida(email, nombre).catch(err =>
       console.error('Error enviando correo de bienvenida:', err)
     );
 
@@ -289,8 +351,8 @@ app.post('/usuarios/login', async (req, res) => {
 
     // ✅ VERIFICAR SI EL USUARIO ESTÁ ACTIVO
     if (user.activo === false) {
-      return res.status(403).json({ 
-        error: 'Cuenta desactivada', 
+      return res.status(403).json({
+        error: 'Cuenta desactivada',
         message: 'Tu cuenta ha sido desactivada. Contacta al administrador.'
       });
     }
@@ -301,10 +363,10 @@ app.post('/usuarios/login', async (req, res) => {
     }
 
     const now = new Date().toISOString();
-    
+
     await supabase
       .from('usuarios')
-      .update({ 
+      .update({
         ultimo_login: now,
         updated_at: now
       })
@@ -501,7 +563,7 @@ app.post('/auth/verificar-codigo', async (req, res) => {
   }
 });
 
-// ==================== CAMBIAR CONTRASEÑA ====================
+// ==================== CAMBIAR CONTRASEÑA (con token de recuperación) ====================
 app.post('/auth/cambiar-password', async (req, res) => {
   try {
     const { email, token, nuevaPassword } = req.body;
@@ -728,7 +790,7 @@ app.post('/usuarios/cambiar-password', async (req, res) => {
 
     await supabase
       .from('usuarios')
-      .update({ 
+      .update({
         password_hash: newPasswordHash,
         updated_at: new Date().toISOString()
       })
@@ -746,53 +808,264 @@ app.post('/usuarios/cambiar-password', async (req, res) => {
 });
 
 // ============================================================
-// ✅ ADMIN ENDPOINTS - Gestión de Usuarios (solo admin)
+// ✅ ETAPA 2 — VINCULACIÓN DE TELÉFONO, DISPOSITIVO Y BIOMETRÍA
 // ============================================================
 
-// ==================== MIDDLEWARE VERIFICAR ADMIN ====================
-const verificarAdmin = async (req, res, next) => {
+// ==================== VINCULAR / ACTUALIZAR TELÉFONO ====================
+// POST /usuarios/:id/telefono
+app.post('/usuarios/:id/telefono', verificarToken, async (req, res) => {
   try {
-    const token = req.headers['authorization']?.split(' ')[1];
-    if (!token) {
-      return res.status(401).json({ error: 'Token no proporcionado' });
+    const { id } = req.params;
+    const { telefono } = req.body;
+
+    if (req.usuario_id !== id) {
+      return res.status(403).json({ error: 'No puedes modificar otra cuenta' });
     }
-    
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    
+
+    if (!telefono || !/^\+?[0-9]{10,15}$/.test(telefono)) {
+      return res.status(400).json({ error: 'Número de teléfono inválido (10-15 dígitos, opcional +)' });
+    }
+
+    const now = new Date().toISOString();
+
     const { data: user, error } = await supabase
       .from('usuarios')
-      .select('rol, activo')
-      .eq('id', decoded.id)
+      .update({ telefono, updated_at: now })
+      .eq('id', id)
+      .select('id, telefono, updated_at')
       .single();
-    
-    if (error || !user) {
-      return res.status(401).json({ error: 'Usuario no encontrado' });
-    }
-    
-    if (user.activo === false) {
-      return res.status(403).json({ error: 'Usuario desactivado' });
-    }
-    
-    if (user.rol !== 'admin') {
-      return res.status(403).json({ error: 'Acceso denegado. Se requiere rol de administrador' });
-    }
-    
-    req.usuario_id = decoded.id;
-    next();
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      message: 'Teléfono vinculado exitosamente',
+      telefono: user.telefono
+    });
   } catch (error) {
-    if (error.name === 'TokenExpiredError') {
-      return res.status(401).json({ error: 'Token expirado' });
-    }
-    return res.status(401).json({ error: 'Token inválido' });
+    console.error('Error vinculando teléfono:', error);
+    res.status(500).json({ error: 'Error al vincular teléfono', detalle: error.message });
   }
-};
+});
+
+// ==================== ASOCIAR DISPOSITIVO ====================
+// POST /usuarios/:id/dispositivo
+app.post('/usuarios/:id/dispositivo', verificarToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { device_id, device_platform, device_model, device_token } = req.body;
+
+    if (req.usuario_id !== id) {
+      return res.status(403).json({ error: 'No puedes asociar un dispositivo a otra cuenta' });
+    }
+
+    if (!device_id || !device_platform) {
+      return res.status(400).json({ error: 'device_id y device_platform son obligatorios' });
+    }
+
+    if (!['android', 'ios', 'web'].includes(device_platform)) {
+      return res.status(400).json({ error: 'device_platform inválido (android | ios | web)' });
+    }
+
+    const now = new Date().toISOString();
+
+    // 1. Actualizar usuario con el device_id
+    const { data: user, error } = await supabase
+      .from('usuarios')
+      .update({
+        device_id,
+        device_platform,
+        device_model: device_model || null,
+        device_token: device_token || null,
+        device_linked_at: now,
+        updated_at: now
+      })
+      .eq('id', id)
+      .select('id, nombre, email, telefono, device_id, device_platform, device_model, device_linked_at')
+      .single();
+
+    if (error) throw error;
+
+    // 2. Desactivar dispositivos anteriores del mismo usuario
+    await supabase
+      .from('dispositivos_usuario')
+      .update({ activo: false, updated_at: now })
+      .eq('usuario_id', id)
+      .eq('activo', true);
+
+    // 3. Insertar o reactivar el dispositivo actual
+    const { data: existing } = await supabase
+      .from('dispositivos_usuario')
+      .select('id')
+      .eq('usuario_id', id)
+      .eq('device_id', device_id)
+      .maybeSingle();
+
+    if (existing) {
+      await supabase
+        .from('dispositivos_usuario')
+        .update({ activo: true, device_platform, device_model: device_model || null, updated_at: now })
+        .eq('id', existing.id);
+    } else {
+      await supabase
+        .from('dispositivos_usuario')
+        .insert({
+          usuario_id: id,
+          device_id,
+          device_platform,
+          device_model: device_model || null,
+          activo: true
+        });
+    }
+
+    res.json({
+      success: true,
+      message: 'Dispositivo asociado exitosamente',
+      dispositivo: {
+        device_id: user.device_id,
+        device_platform: user.device_platform,
+        device_model: user.device_model,
+        device_linked_at: user.device_linked_at
+      }
+    });
+
+  } catch (error) {
+    console.error('Error asociando dispositivo:', error);
+    res.status(500).json({ error: 'Error al asociar dispositivo', detalle: error.message });
+  }
+});
+
+// ==================== OBTENER ESTADO DE VINCULACIÓN ====================
+// GET /usuarios/:id/dispositivo
+app.get('/usuarios/:id/dispositivo', verificarToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (req.usuario_id !== id) {
+      return res.status(403).json({ error: 'Acceso denegado' });
+    }
+
+    const { data: user, error } = await supabase
+      .from('usuarios')
+      .select('telefono, device_id, device_platform, device_model, device_linked_at, biometric_enabled, biometric_enabled_at')
+      .eq('id', id)
+      .single();
+
+    if (error || !user) {
+      return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+
+    res.json({
+      success: true,
+      vinculacion: {
+        telefono_vinculado: !!user.telefono,
+        telefono: user.telefono,
+        dispositivo_asociado: !!user.device_id,
+        device_id: user.device_id,
+        device_platform: user.device_platform,
+        device_model: user.device_model,
+        device_linked_at: user.device_linked_at,
+        biometria_habilitada: user.biometric_enabled || false,
+        biometria_habilitada_at: user.biometric_enabled_at
+      }
+    });
+
+  } catch (error) {
+    console.error('Error obteniendo dispositivo:', error);
+    res.status(500).json({ error: 'Error al obtener estado del dispositivo' });
+  }
+});
+
+// ==================== DESASOCIAR DISPOSITIVO ====================
+// DELETE /usuarios/:id/dispositivo
+app.delete('/usuarios/:id/dispositivo', verificarToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (req.usuario_id !== id) {
+      return res.status(403).json({ error: 'Acceso denegado' });
+    }
+
+    const now = new Date().toISOString();
+
+    await supabase
+      .from('usuarios')
+      .update({
+        device_id: null,
+        device_token: null,
+        device_platform: null,
+        device_model: null,
+        device_linked_at: null,
+        updated_at: now
+      })
+      .eq('id', id);
+
+    await supabase
+      .from('dispositivos_usuario')
+      .update({ activo: false, updated_at: now })
+      .eq('usuario_id', id)
+      .eq('activo', true);
+
+    res.json({ success: true, message: 'Dispositivo desasociado' });
+
+  } catch (error) {
+    console.error('Error desasociando dispositivo:', error);
+    res.status(500).json({ error: 'Error al desasociar dispositivo' });
+  }
+});
+
+// ==================== HABILITAR / DESHABILITAR BIOMETRÍA ====================
+// PATCH /usuarios/:id/biometria
+app.patch('/usuarios/:id/biometria', verificarToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { enabled } = req.body;
+
+    if (req.usuario_id !== id) {
+      return res.status(403).json({ error: 'Acceso denegado' });
+    }
+
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ error: 'enabled debe ser true o false' });
+    }
+
+    const now = new Date().toISOString();
+
+    const { data: user, error } = await supabase
+      .from('usuarios')
+      .update({
+        biometric_enabled: enabled,
+        biometric_enabled_at: enabled ? now : null,
+        updated_at: now
+      })
+      .eq('id', id)
+      .select('biometric_enabled, biometric_enabled_at')
+      .single();
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      message: enabled ? 'Biometría habilitada' : 'Biometría deshabilitada',
+      biometria: user
+    });
+
+  } catch (error) {
+    console.error('Error actualizando biometría:', error);
+    res.status(500).json({ error: 'Error al actualizar biometría' });
+  }
+});
+
+// ============================================================
+// ✅ ADMIN ENDPOINTS - Gestión de Usuarios (solo admin)
+// ============================================================
 
 // GET /admin/usuarios - Obtener todos los usuarios
 app.get('/admin/usuarios', verificarAdmin, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('usuarios')
-      .select('id, nombre, apellido, email, telefono, rol, activo, created_at, ultimo_login')
+      .select('id, nombre, apellido, email, telefono, rol, activo, created_at, ultimo_login, device_id, device_platform, biometric_enabled')
       .order('created_at', { ascending: false });
 
     if (error) throw error;
@@ -808,7 +1081,7 @@ app.get('/admin/usuarios/:id', verificarAdmin, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('usuarios')
-      .select('id, nombre, apellido, email, telefono, rol, activo, created_at, ultimo_login')
+      .select('id, nombre, apellido, email, telefono, rol, activo, created_at, ultimo_login, device_id, device_platform, device_model, device_linked_at, biometric_enabled, biometric_enabled_at')
       .eq('id', req.params.id)
       .single();
 
@@ -847,7 +1120,7 @@ app.post('/admin/usuarios', verificarAdmin, async (req, res) => {
     const passwordHash = await bcrypt.hash(password, salt);
 
     const now = new Date().toISOString();
-    
+
     const { data: newUser, error } = await supabase
       .from('usuarios')
       .insert({
@@ -882,7 +1155,7 @@ app.put('/admin/usuarios/:id', verificarAdmin, async (req, res) => {
     const updateData = {
       updated_at: new Date().toISOString()
     };
-    
+
     if (nombre !== undefined) updateData.nombre = nombre;
     if (apellido !== undefined) updateData.apellido = apellido;
     if (telefono !== undefined) updateData.telefono = telefono || null;
@@ -909,14 +1182,13 @@ app.patch('/admin/usuarios/:id/suspender', verificarAdmin, async (req, res) => {
   try {
     const { id } = req.params;
 
-    // No permitir suspender a sí mismo
     if (id === req.usuario_id) {
-      return res.status(400).json({ error: 'No puedes suspenderse a ti mismo' });
+      return res.status(400).json({ error: 'No puedes suspenderte a ti mismo' });
     }
 
     const { error } = await supabase
       .from('usuarios')
-      .update({ 
+      .update({
         activo: false,
         updated_at: new Date().toISOString()
       })
@@ -937,7 +1209,7 @@ app.patch('/admin/usuarios/:id/activar', verificarAdmin, async (req, res) => {
 
     const { error } = await supabase
       .from('usuarios')
-      .update({ 
+      .update({
         activo: true,
         updated_at: new Date().toISOString()
       })
@@ -956,7 +1228,6 @@ app.delete('/admin/usuarios/:id', verificarAdmin, async (req, res) => {
   try {
     const { id } = req.params;
 
-    // No permitir eliminar a sí mismo
     if (id === req.usuario_id) {
       return res.status(400).json({ error: 'No puedes eliminarte a ti mismo' });
     }
@@ -988,16 +1259,15 @@ app.get('/admin/logs', verificarAdmin, async (req, res) => {
       .limit(100);
 
     if (error) {
-      // Si no existe la tabla, devolver logs simulados
-      return res.json({ 
-        success: true, 
+      return res.json({
+        success: true,
         data: [
           { id: '1', usuario_id: 'admin', email: 'admin@selkalis.com', accion: 'Login', fecha: new Date().toISOString() },
           { id: '2', usuario_id: 'user1', email: 'user@example.com', accion: 'Registro', fecha: new Date().toISOString() }
-        ] 
+        ]
       });
     }
-    
+
     res.json({ success: true, data });
   } catch (error) {
     console.error('Error obteniendo logs:', error);
@@ -1011,7 +1281,24 @@ app.listen(PORT, () => {
   console.log(`   Email configurado: ${FROM_EMAIL}`);
   console.log(`   CORS permitido para: ${frontendUrl}`);
   console.log(`   Health check: http://localhost:${PORT}/health`);
-  console.log(`   Admin endpoints disponibles:`);
+  console.log(`   --- ETAPA 1: Auth base ---`);
+  console.log(`   POST   /usuarios/registro`);
+  console.log(`   POST   /usuarios/login`);
+  console.log(`   POST   /usuarios/logout`);
+  console.log(`   POST   /auth/recuperar`);
+  console.log(`   POST   /auth/verificar-codigo`);
+  console.log(`   POST   /auth/cambiar-password`);
+  console.log(`   POST   /auth/reenviar-codigo`);
+  console.log(`   GET    /usuarios/:id`);
+  console.log(`   PUT    /usuarios/:id`);
+  console.log(`   POST   /usuarios/cambiar-password`);
+  console.log(`   --- ETAPA 2: Dispositivo / Teléfono / Biometría ---`);
+  console.log(`   POST   /usuarios/:id/telefono`);
+  console.log(`   POST   /usuarios/:id/dispositivo`);
+  console.log(`   GET    /usuarios/:id/dispositivo`);
+  console.log(`   DELETE /usuarios/:id/dispositivo`);
+  console.log(`   PATCH  /usuarios/:id/biometria`);
+  console.log(`   --- ADMIN ---`);
   console.log(`   GET    /admin/usuarios`);
   console.log(`   GET    /admin/usuarios/:id`);
   console.log(`   POST   /admin/usuarios`);
@@ -1019,6 +1306,7 @@ app.listen(PORT, () => {
   console.log(`   PATCH  /admin/usuarios/:id/suspender`);
   console.log(`   PATCH  /admin/usuarios/:id/activar`);
   console.log(`   DELETE /admin/usuarios/:id`);
+  console.log(`   GET    /admin/logs`);
 });
 
 module.exports = app;
