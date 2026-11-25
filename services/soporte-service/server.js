@@ -91,12 +91,29 @@ function automaticReply(message) {
 
   const reply = answer => `Respuesta automática: ${answer}`;
   const matches = pattern => pattern.test(normalized);
-  const asksAboutAppointment = matches(/\b(cita|citas|consulta|consultas)\b/);
-  const asksAboutStudy = matches(/\b(estudio|estudios|laboratorio|analisis|resultado|resultados)\b/);
-  const asksAboutTreatment = matches(/\b(tratamiento|tratamientos|medicamento|medicamentos|toma|tomas|dosis|pastilla|pastillas)\b/)
+  const asksAboutAppointment = matches(/\b(cita|citas|consulta|consultas|agenda|agendar|agendamiento)\b/);
+  const asksAboutStudy = matches(/\b(estudio|estudios|laboratorio|laboratorios|analisis|examen|examenes|prueba|pruebas|resultado|resultados)\b/);
+  const asksAboutTreatment = matches(/\b(tratamiento|tratamientos|medicamento|medicamentos|medicina|medicinas|medicacion|toma|tomas|dosis|pastilla|pastillas)\b/)
     || (matches(/\b(frecuencia)\b/) && !asksAboutAppointment);
-  const asksAboutDocuments = matches(/\b(documento|documentos|archivo|archivos|pdf|receta|informe|foto|camara)\b/);
+  const asksAboutDocuments = matches(/\b(documento|documentos|archivo|archivos|pdf|receta|informe|foto|fotos|imagen|imagenes|camara)\b/);
   const asksAboutChat = matches(/\b(chat|chatbox|conversacion|conversaciones)\b/);
+
+  if (/^(?:(?:hola+|hello|hi|buenas(?:\s+(?:noches|tardes|dias))?|buenos\s+dias|hey|que\s+tal|que\s+onda|saludos)\s*)+(?:[, ]+\s*(?:gracias|muchas\s+gracias))?[!.?\s]*$/.test(normalized)) {
+    return reply('¡Hola! Puedo orientarte sobre tratamientos, citas, estudios, documentos, tu cuenta y Soporte. Pregúntame con tus propias palabras; por ejemplo: “¿Cómo cancelo una cita?” o “¿Dónde subo un resultado?”.');
+  }
+
+  if (/^(?:(?:ok|perfecto)\s*,?\s*)?(gracias|muchas\s+gracias|mil\s+gracias|thanks|thank\s+you|te\s+lo\s+agradezco|te\s+agradezco|gracias\s+por\s+tu\s+ayuda|muchas\s+gracias\s+por\s+todo)[!.?\s]*$/.test(normalized)) {
+    return reply('¡Con gusto! Si necesitas otra cosa, dime qué intentas hacer o en qué sección estás y te guío.');
+  }
+
+  if (/^(adios|hasta\s+luego|nos\s+vemos|bye)[!.?\s]*$/.test(normalized)) {
+    return reply('¡Hasta luego! Aquí estaré si necesitas ayuda con Sel Kalis.');
+  }
+
+  if (/^(ayuda|help|menu|guia|me puedes ayudar|necesito ayuda|ayuda por favor)[!.?\s]*$/.test(normalized)
+    || matches(/\b(que puedo pregunt\w*|que preguntas puedo hacer|como te pregunto|como pregunto|no se que preguntar|no se como preguntar|ejemplos de preguntas|dame ejemplos|como pregunt\w* al chat|como usar el chat|como usar la aplicacion|como funciona el chat|guia del sistema|guia de uso|guia de sel kalis|que puedes hacer|para que sirve el chat|como me puedes ayudar)\b/)) {
+    return reply('Puedes escribir una pregunta normal, sin comandos especiales. Te puedo guiar para registrar o cancelar citas, crear tratamientos, marcar tomas, agendar estudios, subir documentos, recuperar acceso y usar Soporte. Ejemplos: “No puedo entrar”, “¿Cómo agrego un medicamento?”, “¿Cómo veo mis estudios?” o “¿Cómo reporto un error?”. Si no tengo una respuesta útil, tu consulta se enviará a la bandeja de soporte para que la atienda una persona.');
+  }
 
   if (asksAboutAppointment && asksAboutDocuments && matches(/\b(adjunt\w*|asociar|vincular)\b/)) {
     return reply('Las citas no tienen un campo para adjuntar archivos. Sube el archivo desde Documentos y selecciona la categoría “Estudio” si corresponde; puedes incluir la fecha o el nombre de la cita en la descripción.');
@@ -106,7 +123,7 @@ function automaticReply(message) {
     return reply('Esto puede requerir atención inmediata. No uses el chat para emergencias: contacta los servicios de emergencia locales o acude a urgencias.');
   }
 
-  if (matches(/\b(que debo tomar|que puedo tomar|que tomar|que medicamento|cuanta dosis|que dosis|dosis correcta|efectos secundarios|reaccion alergica|interaccion de medicamentos|mezclar medicamentos|combinar medicamentos|como curar|tratamiento para|remedio para|me duele|tengo fiebre|tengo dolor|sintoma\w*|alergia|alergico|alergica|diagnostico medico)\b/)) {
+  if (matches(/\b(que debo tomar|que puedo tomar|que tomar|que medicamento|que medicina|que medicinas|cuanta dosis|que dosis|dosis correcta|efectos secundarios|reaccion alergica|interaccion de medicamentos|mezclar medicamentos|combinar medicamentos|como curar|tratamiento para|medicina para|remedio para|me duele|tengo fiebre|tengo dolor|sintoma\w*|alergia|alergico|alergica|diagnostico medico)\b/)) {
     return reply('No puedo diagnosticar ni recomendar medicamentos o dosis. Consulta a tu médico o farmacéutico. Sel Kalis sirve para registrar y organizar indicaciones que ya recibiste; no sustituye la atención médica.');
   }
 
@@ -119,7 +136,7 @@ function automaticReply(message) {
       return reply('En Documentos, pulsa el icono de descarga junto al archivo. También puedes abrirlo: las imágenes y los PDF tienen vista previa y botón “Descargar”.');
     }
 
-    if (matches(/\b(subir|cargar|adjuntar|camara|foto)\b/)) {
+    if (matches(/\b(subir|subo|cargo|cargar|adjuntar|camara|foto)\b/)) {
       return reply('Abre Documentos > “Subir documento”, elige una imagen o PDF (máximo 50 MB) o toma una foto con la cámara. Escribe el nombre, selecciona categoría (Receta, Estudio, Informe u Otro) y, si quieres, agrega una descripción; después pulsa “Subir documento”.');
     }
 
@@ -322,7 +339,7 @@ function automaticReply(message) {
     return reply('Sel Kalis permite organizar tratamientos y tomas, registrar citas y estudios, guardar documentos médicos, consultar un Dashboard y contactar soporte. No sustituye a profesionales de salud. Dime qué sección o acción necesitas y te guío.');
   }
 
-  return reply('No encontré una respuesta automática para esta consulta. Tu mensaje quedó en la conversación para que soporte lo revise. También puedes registrar una incidencia desde Soporte > “Nueva incidencia”.');
+  return null;
 }
 
 function requesterName(user) {
@@ -402,13 +419,13 @@ app.post('/chat/mensajes', authenticate, async (req, res) => {
           mensaje,
           created_at: createdAt.toISOString()
         },
-        {
+        ...(automaticMessage ? [{
           conversation_id: conversation.id,
           sender_id: req.user.id,
           sender_role: 'admin',
           mensaje: automaticMessage,
           created_at: new Date(createdAt.getTime() + 1).toISOString()
-        }
+        }] : [])
       ])
       .select('*');
 
@@ -418,7 +435,7 @@ app.post('/chat/mensajes', authenticate, async (req, res) => {
     );
     const { error: updateError } = await supabase
       .from('support_conversations')
-      .update({ ultimo_mensaje: automaticMessage, updated_at: new Date().toISOString() })
+      .update({ ultimo_mensaje: automaticMessage || mensaje, updated_at: new Date().toISOString() })
       .eq('id', conversation.id);
     if (updateError) throw updateError;
 
@@ -434,6 +451,8 @@ app.get('/admin/conversaciones', authenticate, requireAdmin, async (req, res) =>
     const { data, error } = await supabase
       .from('support_conversations')
       .select('id, usuario_id, nombre, email, ultimo_mensaje, updated_at')
+      .not('ultimo_mensaje', 'like', 'Respuesta automática:%')
+      .not('ultimo_mensaje', 'like', 'Soporte:%')
       .order('updated_at', { ascending: false });
 
     if (error) throw error;
@@ -462,7 +481,10 @@ app.get('/admin/conversaciones/:id/mensajes', authenticate, requireAdmin, async 
       .order('created_at', { ascending: true });
 
     if (error) throw error;
-    return res.json({ success: true, data });
+    const humanMessages = data.filter(message =>
+      message.sender_role !== 'admin' || !message.mensaje.startsWith('Respuesta automática: ')
+    );
+    return res.json({ success: true, data: humanMessages });
   } catch (error) {
     console.error('Error en GET /admin/conversaciones/:id/mensajes:', error);
     return res.status(500).json({ success: false, error: 'No se pudieron cargar los mensajes' });
@@ -499,7 +521,7 @@ app.post('/admin/conversaciones/:id/mensajes', authenticate, requireAdmin, async
     if (error) throw error;
     const { error: updateError } = await supabase
       .from('support_conversations')
-      .update({ ultimo_mensaje: mensaje, updated_at: new Date().toISOString() })
+      .update({ ultimo_mensaje: `Soporte: ${mensaje}`, updated_at: new Date().toISOString() })
       .eq('id', conversation.id);
     if (updateError) throw updateError;
 
