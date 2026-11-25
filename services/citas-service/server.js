@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const supabase = require('./db');
+const { citaYaPaso } = require('./date-time');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../../.env') });
 
@@ -112,16 +113,10 @@ app.get('/citas', verifyToken, async (req, res) => {
 
     if (error) throw error;
 
-    // Calcular estado real basado en fecha/hora actual
-    const ahora = new Date();
     const citasConEstado = data.map(cita => {
-      const fechaCita = new Date(cita.fecha + 'T' + cita.hora);
-      let estado = cita.estado;
-      
-      // Si la cita ya pasó y no está cancelada, marcarla como completada
-      if (fechaCita < ahora && cita.estado !== 'cancelada') {
-        estado = 'completada';
-      }
+      const estado = cita.estado === 'cancelada'
+        ? 'cancelada'
+        : citaYaPaso(cita.fecha, cita.hora, timezone) ? 'completada' : 'pendiente';
       
       return { ...cita, estado };
     });
@@ -163,12 +158,8 @@ app.post('/citas', verifyToken, async (req, res) => {
       });
     }
 
-    // Validar que la fecha no sea demasiado antigua (opcional)
-    const fechaCita = new Date(fecha + 'T' + hora);
-    const ahora = new Date();
-    
     // Si la cita ya pasó, marcarla como completada
-    const estado = fechaCita < ahora ? 'completada' : 'pendiente';
+    const estado = citaYaPaso(fecha, hora, obtenerTimezone(req)) ? 'completada' : 'pendiente';
 
     const { data, error } = await supabase
       .from('citas')
@@ -210,10 +201,12 @@ app.put('/citas/:id', verifyToken, async (req, res) => {
 
     if (checkError) throw checkError;
 
-    // Calcular estado basado en fecha/hora
-    const fechaCita = new Date(fecha + 'T' + hora);
-    const ahora = new Date();
-    const estado = fechaCita < ahora ? 'completada' : 'pendiente';
+    const timezone = obtenerTimezone(req);
+    const estado = citaYaPaso(
+      fecha || existingCita.fecha,
+      hora || existingCita.hora,
+      timezone
+    ) ? 'completada' : 'pendiente';
 
     const { data, error } = await supabase
       .from('citas')

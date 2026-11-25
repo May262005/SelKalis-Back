@@ -231,7 +231,7 @@ function isDueInCurrentWindow(dueAt: string, nowLocal: string): boolean {
     return Date.UTC(year, month - 1, day, hour, minute) / 60000;
   };
   const elapsedMinutes = toMinutes(nowLocal) - toMinutes(dueAt);
-  return elapsedMinutes >= 0 && elapsedMinutes < 2;
+  return elapsedMinutes >= 0 && elapsedMinutes < 10;
 }
 
 async function scanMedicationReminders(now: Date): Promise<number> {
@@ -301,7 +301,7 @@ async function scanAppointmentReminders(now: Date): Promise<number> {
   let created = 0;
   const preferencesByUser = new Map<string, Promise<NotificationPreferences>>();
   for (const appointment of appointments || []) {
-    if (appointment.recordatorio === false || ["cancelada", "completada"].includes(appointment.estado)) continue;
+    if (appointment.recordatorio === false || appointment.estado === "cancelada") continue;
     if (!preferencesByUser.has(appointment.usuario_id)) {
       preferencesByUser.set(appointment.usuario_id, getPreferences(appointment.usuario_id));
     }
@@ -310,6 +310,7 @@ async function scanAppointmentReminders(now: Date): Promise<number> {
 
     const nowLocal = formatLocalDateTime(now, preferences.timezone);
     const scheduledAt = `${appointment.fecha}T${appointment.hora.slice(0, 5)}`;
+    if (appointment.estado === "completada" && scheduledAt <= nowLocal) continue;
     for (const leadMinutes of [1440, 60]) {
       const dueAt = shiftLocalDateTime(scheduledAt, -leadMinutes);
       if (!isDueInCurrentWindow(dueAt, nowLocal)) continue;
