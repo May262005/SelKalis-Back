@@ -10,8 +10,7 @@ const {
   defaultPreferences,
   getPreferences,
   notifyUser,
-  notifyAdmins,
-  startReminderScheduler
+  notifyAdmins
 } = require('./notifications');
 
 if (!process.env.JWT_SECRET) {
@@ -910,5 +909,4 @@ app.post('/tickets/:id/respuestas', authenticate, async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Soporte Service running on port ${PORT}`);
   console.log(`CORS permitido para: ${frontendUrl}`);
-  startReminderScheduler();
 });
