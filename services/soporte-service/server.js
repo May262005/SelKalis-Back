@@ -92,6 +92,20 @@ function readMessage(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function isNotificationsSchemaMissing(error) {
+  return error?.code === '42P01'
+    || error?.code === 'PGRST205'
+    || error?.code === 'PGRST204';
+}
+
+function notificationSchemaUnavailable(res) {
+  return res.status(503).json({
+    success: false,
+    code: 'NOTIFICATIONS_SCHEMA_MISSING',
+    error: 'Falta crear las tablas de notificaciones. Ejecuta migrations/20261125-notifications.sql en el proyecto de Supabase que usa soporte-service.'
+  });
+}
+
 function automaticReply(message) {
   const normalized = message
     .normalize('NFD')
@@ -407,6 +421,7 @@ app.get('/notifications/preferences', authenticate, async (req, res) => {
     return res.json({ success: true, data });
   } catch (error) {
     console.error('Error en GET /notifications/preferences:', error);
+    if (isNotificationsSchemaMissing(error)) return notificationSchemaUnavailable(res);
     return res.status(500).json({ success: false, error: 'No se pudieron cargar las preferencias de notificación' });
   }
 });
@@ -451,6 +466,7 @@ app.put('/notifications/preferences', authenticate, async (req, res) => {
     return res.json({ success: true, data });
   } catch (error) {
     console.error('Error en PUT /notifications/preferences:', error);
+    if (isNotificationsSchemaMissing(error)) return notificationSchemaUnavailable(res);
     return res.status(500).json({ success: false, error: 'No se pudieron guardar las preferencias de notificación' });
   }
 });
