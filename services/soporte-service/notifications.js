@@ -91,7 +91,13 @@ async function sendPush(usuarioId, notification, preferences) {
 
   const deliveries = await Promise.all(subscriptions.map(async subscription => {
     try {
-      await webpush.sendNotification(subscription, payload);
+      await webpush.sendNotification({
+        endpoint: subscription.endpoint,
+        keys: {
+          p256dh: subscription.p256dh,
+          auth: subscription.auth
+        }
+      }, payload);
       return true;
     } catch (pushError) {
       if (pushError.statusCode === 404 || pushError.statusCode === 410) {
