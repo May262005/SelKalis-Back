@@ -86,3 +86,21 @@ services:
         sync: false
       - key: JWT_SECRET
         sync: false
+
+  # ==================== SOPORTE SERVICE ====================
+  - type: web
+    name: selkalis-soporte-service
+    runtime: node
+    rootDir: services/soporte-service
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: FRONTEND_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: JWT_SECRET
+        sync: false
