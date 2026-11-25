@@ -308,7 +308,7 @@ function automaticReply(message) {
   }
 
   if (matches(/\b(admin|administrador|administracion)\b/)) {
-    return reply('El menú de administrador incluye Inicio, Usuarios y Mesa de ayuda. Inicio muestra estadísticas de usuarios, incidencias y conversaciones; en Usuarios se pueden buscar, crear, editar, activar, suspender o eliminar cuentas; en Mesa de ayuda se atienden conversaciones y se actualizan incidencias. Las cuentas administradoras no registran incidencias propias.');
+    return reply('El menú de administrador incluye Inicio, Usuarios y Mesa de ayuda. Inicio muestra estadísticas de usuarios e incidencias; en Usuarios se pueden buscar, crear, editar, activar, suspender o eliminar cuentas; en Mesa de ayuda se revisan, responden y actualizan incidencias. Las cuentas administradoras no registran incidencias propias.');
   }
 
   if (asksAboutChat) {
@@ -339,7 +339,7 @@ function automaticReply(message) {
     return reply('Sel Kalis permite organizar tratamientos y tomas, registrar citas y estudios, guardar documentos médicos, consultar un Dashboard y contactar soporte. No sustituye a profesionales de salud. Dime qué sección o acción necesitas y te guío.');
   }
 
-  return null;
+  return reply('No tengo una respuesta confiable para esa pregunta. Para que el equipo te ayude, abre Soporte > “Nueva incidencia”, selecciona la categoría “Soporte técnico” y describe qué intentabas hacer, qué ocurrió y cualquier mensaje de error. Podrás consultar el seguimiento en “Mis reportes”.');
 }
 
 function requesterName(user) {
@@ -442,92 +442,6 @@ app.post('/chat/mensajes', authenticate, async (req, res) => {
     return res.status(201).json({ success: true, data: orderedMessages });
   } catch (error) {
     console.error('Error en POST /chat/mensajes:', error);
-    return res.status(500).json({ success: false, error: 'No se pudo enviar el mensaje' });
-  }
-});
-
-app.get('/admin/conversaciones', authenticate, requireAdmin, async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from('support_conversations')
-      .select('id, usuario_id, nombre, email, ultimo_mensaje, updated_at')
-      .not('ultimo_mensaje', 'like', 'Respuesta automática:%')
-      .not('ultimo_mensaje', 'like', 'Soporte:%')
-      .order('updated_at', { ascending: false });
-
-    if (error) throw error;
-    return res.json({ success: true, data });
-  } catch (error) {
-    console.error('Error en GET /admin/conversaciones:', error);
-    return res.status(500).json({ success: false, error: 'No se pudieron cargar las conversaciones' });
-  }
-});
-
-app.get('/admin/conversaciones/:id/mensajes', authenticate, requireAdmin, async (req, res) => {
-  try {
-    const { data: conversation, error: conversationError } = await supabase
-      .from('support_conversations')
-      .select('id')
-      .eq('id', req.params.id)
-      .single();
-    if (conversationError || !conversation) {
-      return res.status(404).json({ success: false, error: 'Conversación no encontrada' });
-    }
-
-    const { data, error } = await supabase
-      .from('support_chat_messages')
-      .select('*')
-      .eq('conversation_id', conversation.id)
-      .order('created_at', { ascending: true });
-
-    if (error) throw error;
-    const humanMessages = data.filter(message =>
-      message.sender_role !== 'admin' || !message.mensaje.startsWith('Respuesta automática: ')
-    );
-    return res.json({ success: true, data: humanMessages });
-  } catch (error) {
-    console.error('Error en GET /admin/conversaciones/:id/mensajes:', error);
-    return res.status(500).json({ success: false, error: 'No se pudieron cargar los mensajes' });
-  }
-});
-
-app.post('/admin/conversaciones/:id/mensajes', authenticate, requireAdmin, async (req, res) => {
-  const mensaje = readMessage(req.body?.mensaje);
-  if (!mensaje || mensaje.length > 1000) {
-    return res.status(400).json({ success: false, error: 'El mensaje debe tener entre 1 y 1000 caracteres' });
-  }
-
-  try {
-    const { data: conversation, error: conversationError } = await supabase
-      .from('support_conversations')
-      .select('id')
-      .eq('id', req.params.id)
-      .single();
-    if (conversationError || !conversation) {
-      return res.status(404).json({ success: false, error: 'Conversación no encontrada' });
-    }
-
-    const { data, error } = await supabase
-      .from('support_chat_messages')
-      .insert({
-        conversation_id: conversation.id,
-        sender_id: req.user.id,
-        sender_role: 'admin',
-        mensaje
-      })
-      .select('*')
-      .single();
-
-    if (error) throw error;
-    const { error: updateError } = await supabase
-      .from('support_conversations')
-      .update({ ultimo_mensaje: `Soporte: ${mensaje}`, updated_at: new Date().toISOString() })
-      .eq('id', conversation.id);
-    if (updateError) throw updateError;
-
-    return res.status(201).json({ success: true, data });
-  } catch (error) {
-    console.error('Error en POST /admin/conversaciones/:id/mensajes:', error);
     return res.status(500).json({ success: false, error: 'No se pudo enviar el mensaje' });
   }
 });
