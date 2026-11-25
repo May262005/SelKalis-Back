@@ -1,4 +1,5 @@
 const webpush = require('web-push');
+const crypto = require('crypto');
 const supabase = require('./db');
 
 const defaultTimezone = 'America/Mexico_City';
@@ -49,6 +50,10 @@ function notificationUrl(notification) {
   return '/soporte';
 }
 
+function pushEndpointRef(endpoint) {
+  return crypto.createHash('sha256').update(endpoint).digest('hex').slice(0, 8);
+}
+
 async function sendPush(usuarioId, notification, preferences) {
   if (!pushConfigured || !preferences.push_enabled) return 0;
 
@@ -65,7 +70,10 @@ async function sendPush(usuarioId, notification, preferences) {
     .eq('usuario_id', usuarioId);
 
   if (error) throw error;
-  if (!subscriptions?.length) return 0;
+  if (!subscriptions?.length) {
+    console.info(`Push de tipo ${notification.tipo}: 0/0 suscripciones aceptadas.`);
+    return 0;
+  }
 
   const payload = JSON.stringify({
     notification: {
@@ -86,6 +94,7 @@ async function sendPush(usuarioId, notification, preferences) {
   });
 
   const deliveries = await Promise.all(subscriptions.map(async subscription => {
+    const endpointRef = pushEndpointRef(subscription.endpoint);
     try {
       await webpush.sendNotification({
         endpoint: subscription.endpoint,
@@ -94,6 +103,7 @@ async function sendPush(usuarioId, notification, preferences) {
           auth: subscription.auth
         }
       }, payload);
+      console.info(`Push de tipo ${notification.tipo} [${endpointRef}]: aceptado.`);
       return true;
     } catch (pushError) {
       if (pushError.statusCode === 404 || pushError.statusCode === 410) {
@@ -102,13 +112,16 @@ async function sendPush(usuarioId, notification, preferences) {
           .delete()
           .eq('endpoint', subscription.endpoint);
         if (deleteError) throw deleteError;
-        console.info('Suscripción push expirada eliminada.');
+        console.info(`Suscripción push expirada eliminada [${endpointRef}].`);
         return false;
       }
+      console.error(`Falló el push de tipo ${notification.tipo} [${endpointRef}], estado ${pushError.statusCode || 'desconocido'}.`);
       throw pushError;
     }
   }));
-  return deliveries.filter(Boolean).length;
+  const delivered = deliveries.filter(Boolean).length;
+  console.info(`Push de tipo ${notification.tipo}: ${delivered}/${subscriptions.length} suscripciones aceptadas.`);
+  return delivered;
 }
 
 async function notifyUser(usuarioId, notification) {

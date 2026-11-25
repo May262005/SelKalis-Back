@@ -1,4 +1,5 @@
 require('dotenv').config();
+const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
@@ -90,6 +91,18 @@ function requireAdmin(req, res, next) {
 
 function readMessage(value) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function pushEndpointRef(endpoint) {
+  return crypto.createHash('sha256').update(endpoint).digest('hex').slice(0, 8);
+}
+
+function pushClientName(userAgent = '') {
+  if (/Edg\//i.test(userAgent)) return 'Edge';
+  if (/Chrome\//i.test(userAgent) && /Android/i.test(userAgent)) return 'Chrome Android';
+  if (/Chrome\//i.test(userAgent)) return 'Chrome';
+  if (/Firefox\//i.test(userAgent)) return 'Firefox';
+  return 'navegador desconocido';
 }
 
 function isNotificationsSchemaMissing(error) {
@@ -507,6 +520,8 @@ app.post('/notifications/subscriptions', authenticate, async (req, res) => {
       }, { onConflict: 'endpoint' });
     if (subscriptionError) throw subscriptionError;
 
+    console.info(`Suscripción push guardada: ${pushClientName(req.get('user-agent'))} [${pushEndpointRef(endpoint)}].`);
+
     const { error: preferencesError } = await supabase
       .from('notification_preferences')
       .upsert({
@@ -526,7 +541,7 @@ app.post('/notifications/subscriptions', authenticate, async (req, res) => {
 
 app.delete('/notifications/subscriptions', authenticate, async (req, res) => {
   const endpoint = req.body?.endpoint;
-  if (endpoint !== undefined && typeof endpoint !== 'string') {
+  if (endpoint !== undefined && (typeof endpoint !== 'string' || !endpoint.trim())) {
     return res.status(400).json({ success: false, error: 'Endpoint de push no válido' });
   }
 
@@ -540,17 +555,33 @@ app.delete('/notifications/subscriptions', authenticate, async (req, res) => {
     const { error: subscriptionError } = await query;
     if (subscriptionError) throw subscriptionError;
 
+    if (endpoint) {
+      console.info(`Suscripción push retirada: ${pushClientName(req.get('user-agent'))} [${pushEndpointRef(endpoint)}].`);
+    }
+
+    const currentPreferences = await getPreferences(req.user.id);
+    let pushEnabled = false;
+    if (endpoint) {
+      const { data: remainingSubscriptions, error: remainingError } = await supabase
+        .from('notification_subscriptions')
+        .select('endpoint')
+        .eq('usuario_id', req.user.id)
+        .limit(1);
+      if (remainingError) throw remainingError;
+      pushEnabled = currentPreferences.push_enabled && Boolean(remainingSubscriptions?.length);
+    }
+
     const { error: preferencesError } = await supabase
       .from('notification_preferences')
       .upsert({
         ...defaultPreferences(req.user.id),
-        ...(await getPreferences(req.user.id)),
-        push_enabled: false,
+        ...currentPreferences,
+        push_enabled: pushEnabled,
         updated_at: new Date().toISOString()
       }, { onConflict: 'usuario_id' });
     if (preferencesError) throw preferencesError;
 
-    return res.json({ success: true, data: { push_enabled: false } });
+    return res.json({ success: true, data: { push_enabled: pushEnabled } });
   } catch (error) {
     console.error('Error en DELETE /notifications/subscriptions:', error);
     return res.status(500).json({ success: false, error: 'No se pudo desactivar la suscripción push' });
