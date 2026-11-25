@@ -54,6 +54,31 @@ const verifyToken = (req, res, next) => {
   }
 };
 
+function notificarCambioCita(req, cita, eventType) {
+  const notificationsUrl = process.env.NOTIFICATIONS_API_URL;
+  const authorization = req.headers.authorization;
+  if (!notificationsUrl || !authorization) {
+    console.warn('Notificación de cita omitida: configura NOTIFICATIONS_API_URL y conserva el token autenticado.');
+    return;
+  }
+
+  const eventKey = `${cita.id}:${cita.updated_at || cita.created_at || new Date().toISOString()}:${eventType}`;
+  void fetch(`${notificationsUrl.replace(/\/$/, '')}/notifications/events/appointment`, {
+    method: 'POST',
+    headers: {
+      Authorization: authorization,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ eventType, eventKey, appointment: cita })
+  }).then(async response => {
+    if (!response.ok) {
+      console.error(`Notificación de cita no aceptada por soporte: ${response.status} ${await response.text()}`);
+    }
+  }).catch(error => {
+    console.error('No se pudo enviar el evento de cita al servicio de notificaciones:', error);
+  });
+}
+
 // ==================== HEALTH CHECK ====================
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', service: 'citas-service' });
@@ -163,6 +188,7 @@ app.post('/citas', verifyToken, async (req, res) => {
       .single();
 
     if (error) throw error;
+    notificarCambioCita(req, data, 'created');
     res.json({ success: true, data });
   } catch (error) {
     console.error('Error en POST /citas:', error);
@@ -209,6 +235,14 @@ app.put('/citas/:id', verifyToken, async (req, res) => {
       .single();
 
     if (error) throw error;
+    const appointmentChanged = existingCita.titulo !== data.titulo
+      || existingCita.especialidad !== data.especialidad
+      || existingCita.fecha !== data.fecha
+      || existingCita.hora !== data.hora
+      || existingCita.tipo !== data.tipo
+      || existingCita.lugar !== data.lugar
+      || existingCita.notas !== data.notas;
+    if (appointmentChanged) notificarCambioCita(req, data, 'updated');
     res.json({ success: true, data });
   } catch (error) {
     console.error('Error en PUT /citas/:id:', error);
@@ -228,6 +262,14 @@ app.patch('/citas/:id/estado', verifyToken, async (req, res) => {
       });
     }
 
+    const { data: previousCita, error: previousError } = await supabase
+      .from('citas')
+      .select('estado')
+      .eq('id', req.params.id)
+      .eq('usuario_id', req.usuario_id)
+      .single();
+    if (previousError) throw previousError;
+
     const { data, error } = await supabase
       .from('citas')
       .update({
@@ -240,6 +282,7 @@ app.patch('/citas/:id/estado', verifyToken, async (req, res) => {
       .single();
 
     if (error) throw error;
+    if (previousCita.estado !== data.estado) notificarCambioCita(req, data, 'status_changed');
     res.json({ success: true, data });
   } catch (error) {
     console.error('Error en PATCH /citas/:id/estado:', error);
@@ -250,6 +293,14 @@ app.patch('/citas/:id/estado', verifyToken, async (req, res) => {
 // DELETE: Eliminar una cita (soft delete o real)
 app.delete('/citas/:id', verifyToken, async (req, res) => {
   try {
+    const { data: cita, error: selectError } = await supabase
+      .from('citas')
+      .select('*')
+      .eq('id', req.params.id)
+      .eq('usuario_id', req.usuario_id)
+      .single();
+    if (selectError) throw selectError;
+
     const { error } = await supabase
       .from('citas')
       .delete()
@@ -257,6 +308,7 @@ app.delete('/citas/:id', verifyToken, async (req, res) => {
       .eq('usuario_id', req.usuario_id);
 
     if (error) throw error;
+    notificarCambioCita(req, { ...cita, estado: 'cancelada', updated_at: new Date().toISOString() }, 'status_changed');
     res.json({ success: true });
   } catch (error) {
     console.error('Error en DELETE /citas/:id:', error);

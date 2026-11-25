@@ -3,6 +3,15 @@ const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const supabase = require('./db');
+const {
+  pushConfigured,
+  pushPublicKey,
+  defaultPreferences,
+  getPreferences,
+  notifyUser,
+  notifyAdmins,
+  startReminderScheduler
+} = require('./notifications');
 
 if (!process.env.JWT_SECRET) {
   throw new Error('Falta la variable de entorno JWT_SECRET');
@@ -382,6 +391,243 @@ app.get('/health', (req, res) => {
   res.json({ status: 'OK', service: 'soporte-service' });
 });
 
+app.get('/notifications/config', authenticate, (req, res) => {
+  res.json({
+    success: true,
+    data: {
+      pushAvailable: pushConfigured,
+      publicKey: pushConfigured ? pushPublicKey : ''
+    }
+  });
+});
+
+app.get('/notifications/preferences', authenticate, async (req, res) => {
+  try {
+    const data = await getPreferences(req.user.id);
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error en GET /notifications/preferences:', error);
+    return res.status(500).json({ success: false, error: 'No se pudieron cargar las preferencias de notificación' });
+  }
+});
+
+app.put('/notifications/preferences', authenticate, async (req, res) => {
+  const allowedFields = ['medicamentos_enabled', 'citas_enabled', 'soporte_enabled'];
+  const changes = {};
+  for (const field of allowedFields) {
+    if (req.body?.[field] !== undefined) {
+      if (typeof req.body[field] !== 'boolean') {
+        return res.status(400).json({ success: false, error: `La preferencia ${field} debe ser booleana` });
+      }
+      changes[field] = req.body[field];
+    }
+  }
+
+  if (req.body?.timezone !== undefined) {
+    if (typeof req.body.timezone !== 'string' || req.body.timezone.length > 100) {
+      return res.status(400).json({ success: false, error: 'Zona horaria no válida' });
+    }
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: req.body.timezone });
+      changes.timezone = req.body.timezone;
+    } catch {
+      return res.status(400).json({ success: false, error: 'Zona horaria no válida' });
+    }
+  }
+
+  try {
+    const current = await getPreferences(req.user.id);
+    const { data, error } = await supabase
+      .from('notification_preferences')
+      .upsert({
+        ...current,
+        ...changes,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'usuario_id' })
+      .select('*')
+      .single();
+
+    if (error) throw error;
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error en PUT /notifications/preferences:', error);
+    return res.status(500).json({ success: false, error: 'No se pudieron guardar las preferencias de notificación' });
+  }
+});
+
+app.post('/notifications/subscriptions', authenticate, async (req, res) => {
+  if (!pushConfigured) {
+    return res.status(503).json({ success: false, error: 'Las notificaciones push aún no están configuradas en el servidor' });
+  }
+
+  const subscription = req.body?.subscription;
+  const endpoint = subscription?.endpoint;
+  const p256dh = subscription?.keys?.p256dh;
+  const auth = subscription?.keys?.auth;
+  const timezone = req.body?.timezone || 'America/Mexico_City';
+
+  if (typeof endpoint !== 'string' || typeof p256dh !== 'string' || typeof auth !== 'string') {
+    return res.status(400).json({ success: false, error: 'La suscripción push no tiene un formato válido' });
+  }
+  try {
+    if (new URL(endpoint).protocol !== 'https:') {
+      return res.status(400).json({ success: false, error: 'El endpoint de push debe usar HTTPS' });
+    }
+    new Intl.DateTimeFormat('en-US', { timeZone: timezone });
+  } catch {
+    return res.status(400).json({ success: false, error: 'Endpoint o zona horaria no válidos' });
+  }
+
+  try {
+    const current = await getPreferences(req.user.id);
+    const { error: subscriptionError } = await supabase
+      .from('notification_subscriptions')
+      .upsert({
+        usuario_id: req.user.id,
+        endpoint,
+        p256dh,
+        auth,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'endpoint' });
+    if (subscriptionError) throw subscriptionError;
+
+    const { error: preferencesError } = await supabase
+      .from('notification_preferences')
+      .upsert({
+        ...current,
+        push_enabled: true,
+        timezone,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'usuario_id' });
+    if (preferencesError) throw preferencesError;
+
+    return res.status(201).json({ success: true, data: { push_enabled: true } });
+  } catch (error) {
+    console.error('Error en POST /notifications/subscriptions:', error);
+    return res.status(500).json({ success: false, error: 'No se pudo guardar la suscripción push' });
+  }
+});
+
+app.delete('/notifications/subscriptions', authenticate, async (req, res) => {
+  const endpoint = req.body?.endpoint;
+  if (endpoint !== undefined && typeof endpoint !== 'string') {
+    return res.status(400).json({ success: false, error: 'Endpoint de push no válido' });
+  }
+
+  try {
+    let query = supabase
+      .from('notification_subscriptions')
+      .delete()
+      .eq('usuario_id', req.user.id);
+    if (endpoint) query = query.eq('endpoint', endpoint);
+
+    const { error: subscriptionError } = await query;
+    if (subscriptionError) throw subscriptionError;
+
+    const { error: preferencesError } = await supabase
+      .from('notification_preferences')
+      .upsert({
+        ...defaultPreferences(req.user.id),
+        ...(await getPreferences(req.user.id)),
+        push_enabled: false,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'usuario_id' });
+    if (preferencesError) throw preferencesError;
+
+    return res.json({ success: true, data: { push_enabled: false } });
+  } catch (error) {
+    console.error('Error en DELETE /notifications/subscriptions:', error);
+    return res.status(500).json({ success: false, error: 'No se pudo desactivar la suscripción push' });
+  }
+});
+
+app.get('/notifications', authenticate, async (req, res) => {
+  const limit = Math.min(Math.max(Number(req.query.limit) || 30, 1), 100);
+  try {
+    const { data, error } = await supabase
+      .from('app_notifications')
+      .select('*')
+      .eq('usuario_id', req.user.id)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error en GET /notifications:', error);
+    return res.status(500).json({ success: false, error: 'No se pudieron cargar las notificaciones' });
+  }
+});
+
+app.patch('/notifications/read-all', authenticate, async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from('app_notifications')
+      .update({ read_at: new Date().toISOString() })
+      .eq('usuario_id', req.user.id)
+      .is('read_at', null);
+    if (error) throw error;
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('Error en PATCH /notifications/read-all:', error);
+    return res.status(500).json({ success: false, error: 'No se pudieron marcar como leídas' });
+  }
+});
+
+app.patch('/notifications/:id/read', authenticate, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('app_notifications')
+      .update({ read_at: new Date().toISOString() })
+      .eq('id', req.params.id)
+      .eq('usuario_id', req.user.id)
+      .select('*')
+      .single();
+    if (error) throw error;
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error en PATCH /notifications/:id/read:', error);
+    return res.status(500).json({ success: false, error: 'No se pudo marcar la notificación como leída' });
+  }
+});
+
+app.post('/notifications/events/appointment', authenticate, async (req, res) => {
+  const event = req.body;
+  const appointment = event?.appointment;
+  const eventType = event?.eventType;
+  if (!['created', 'updated', 'status_changed'].includes(eventType)
+    || !appointment?.id || !appointment?.fecha || !appointment?.hora) {
+    return res.status(400).json({ success: false, error: 'Evento de cita no válido' });
+  }
+
+  const eventSuffix = event?.eventKey;
+  if (typeof eventSuffix !== 'string' || eventSuffix.length < 1 || eventSuffix.length > 180) {
+    return res.status(400).json({ success: false, error: 'Identificador de evento no válido' });
+  }
+
+  const title = eventType === 'created'
+    ? 'Cita registrada'
+    : eventType === 'status_changed'
+      ? 'Estado de cita actualizado'
+      : 'Cita actualizada';
+  const mensaje = eventType === 'status_changed'
+    ? `El estado de tu cita ${appointment.titulo || ''} cambió a ${appointment.estado || 'actualizado'}.`
+    : `Tu cita ${appointment.titulo || ''} está programada para el ${appointment.fecha} a las ${appointment.hora.slice(0, 5)}.`;
+
+  try {
+    await notifyUser(req.user.id, {
+      tipo: 'cita',
+      titulo: title,
+      mensaje,
+      event_key: `appointment-event:${eventSuffix}`,
+      datos: { url: '/citas', cita_id: appointment.id }
+    });
+    return res.status(202).json({ success: true });
+  } catch (error) {
+    console.error('Error en POST /notifications/events/appointment:', error);
+    return res.status(500).json({ success: false, error: 'No se pudo registrar la notificación de cita' });
+  }
+});
+
 app.get('/chat/mensajes', authenticate, async (req, res) => {
   try {
     const conversation = await getConversationForUser(req.user);
@@ -491,6 +737,15 @@ app.post('/tickets', authenticate, async (req, res) => {
       .single();
 
     if (error) throw error;
+    void notifyAdmins({
+      tipo: 'soporte',
+      titulo: 'Nueva incidencia',
+      mensaje: `Se registró una incidencia: ${data.asunto}.`,
+      event_key: `ticket-created:${data.id}`,
+      datos: { url: '/soporte', ticket_id: data.id }
+    }).catch(notificationError => {
+      console.error('No se pudo notificar la nueva incidencia:', notificationError);
+    });
     return res.status(201).json({ success: true, data });
   } catch (error) {
     console.error('Error en POST /tickets:', error);
@@ -505,6 +760,7 @@ app.patch('/tickets/:id', authenticate, requireAdmin, async (req, res) => {
   }
 
   try {
+    const previousTicket = await findTicket(req.params.id);
     const { data, error } = await supabase
       .from('support_tickets')
       .update({ estado, updated_at: new Date().toISOString() })
@@ -513,6 +769,17 @@ app.patch('/tickets/:id', authenticate, requireAdmin, async (req, res) => {
       .single();
 
     if (error) throw error;
+    if (previousTicket.estado !== data.estado) {
+      void notifyUser(data.usuario_id, {
+        tipo: 'soporte',
+        titulo: 'Estado de incidencia actualizado',
+        mensaje: `Tu incidencia "${data.asunto}" cambió a ${data.estado.replace('_', ' ')}.`,
+        event_key: `ticket-status:${data.id}:${data.estado}:${data.updated_at}`,
+        datos: { url: '/soporte', ticket_id: data.id, estado: data.estado }
+      }).catch(notificationError => {
+        console.error('No se pudo notificar el cambio de estado:', notificationError);
+      });
+    }
     return res.json({ success: true, data });
   } catch (error) {
     console.error('Error en PATCH /tickets/:id:', error);
@@ -565,6 +832,27 @@ app.post('/tickets/:id/respuestas', authenticate, async (req, res) => {
       .single();
 
     if (error) throw error;
+    if (req.user.rol === 'admin') {
+      void notifyUser(ticket.usuario_id, {
+        tipo: 'soporte',
+        titulo: 'Nueva respuesta de soporte',
+        mensaje: `Soporte respondió a tu incidencia "${ticket.asunto}".`,
+        event_key: `ticket-reply:${data.id}:user:${ticket.usuario_id}`,
+        datos: { url: '/soporte', ticket_id: ticket.id }
+      }).catch(notificationError => {
+        console.error('No se pudo notificar la respuesta de soporte:', notificationError);
+      });
+    } else {
+      void notifyAdmins({
+        tipo: 'soporte',
+        titulo: 'Nuevo mensaje en incidencia',
+        mensaje: `El usuario respondió a la incidencia "${ticket.asunto}".`,
+        event_key: `ticket-reply:${data.id}`,
+        datos: { url: '/soporte', ticket_id: ticket.id }
+      }).catch(notificationError => {
+        console.error('No se pudo notificar el mensaje del usuario:', notificationError);
+      });
+    }
     return res.status(201).json({ success: true, data });
   } catch (error) {
     console.error('Error en POST /tickets/:id/respuestas:', error);
@@ -575,4 +863,5 @@ app.post('/tickets/:id/respuestas', authenticate, async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Soporte Service running on port ${PORT}`);
   console.log(`CORS permitido para: ${frontendUrl}`);
+  startReminderScheduler();
 });

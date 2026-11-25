@@ -3,13 +3,14 @@
   "version": "1.0.0",
   "description": "Backend para Salud App",
   "scripts": {
-    "dev": "concurrently \"npm run dev:gateway\" \"npm run dev:auth\" \"npm run dev:tratamientos\" \"npm run dev:citas\" \"npm run dev:estudios\"",
+    "dev": "concurrently \"npm run dev:gateway\" \"npm run dev:auth\" \"npm run dev:tratamientos\" \"npm run dev:citas\" \"npm run dev:estudios\" \"npm run dev:soporte\"",
     "dev:gateway": "cd api-gateway && npm run dev",
     "dev:auth": "cd services/auth-service && npm run dev",
     "dev:tratamientos": "cd services/tratamientos-service && npm run dev",
     "dev:citas": "cd services/citas-service && npm run dev",
     "dev:estudios": "cd services/estudios-service && npm run dev",
-    "install:all": "npm install && cd api-gateway && npm install && cd ../services/auth-service && npm install && cd ../services/tratamientos-service && npm install && cd ../services/citas-service && npm install && cd ../services/estudios-service && npm install"
+    "dev:soporte": "cd services/soporte-service && npm run dev",
+    "install:all": "npm install && cd api-gateway && npm install && cd ../services/auth-service && npm install && cd ../services/tratamientos-service && npm install && cd ../services/citas-service && npm install && cd ../services/estudios-service && npm install && cd ../soporte-service && npm install"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"
