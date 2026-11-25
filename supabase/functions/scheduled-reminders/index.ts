@@ -29,13 +29,14 @@ if (pushPublicKey && pushPrivateKey && pushSubject) {
   webpush.setVapidDetails(pushSubject, pushPublicKey, pushPrivateKey);
 }
 
-type NotificationType = "medicamento" | "cita";
+type NotificationType = "medicamento" | "cita" | "estudio";
 
 type NotificationPreferences = {
   usuario_id: string;
   push_enabled: boolean;
   medicamentos_enabled: boolean;
   citas_enabled: boolean;
+  estudios_enabled: boolean;
   soporte_enabled: boolean;
   timezone: string;
 };
@@ -46,6 +47,7 @@ function defaultPreferences(usuarioId: string): NotificationPreferences {
     push_enabled: false,
     medicamentos_enabled: true,
     citas_enabled: true,
+    estudios_enabled: true,
     soporte_enabled: true,
     timezone: defaultTimezone
   };
@@ -70,7 +72,8 @@ function notificationUrl(notification: {
 }): string {
   const url = notification.datos?.url;
   if (typeof url === "string" && url.startsWith("/") && !url.startsWith("//")) return url;
-  return notification.tipo === "medicamento" ? "/tratamientos" : "/citas";
+  if (notification.tipo === "medicamento") return "/tratamientos";
+  return notification.tipo === "estudio" ? "/estudios" : "/citas";
 }
 
 async function pushEndpointRef(endpoint: string): Promise<string> {
@@ -96,6 +99,7 @@ async function sendPush(
   if (!preferences.push_enabled) return 0;
   if (notification.tipo === "medicamento" && !preferences.medicamentos_enabled) return 0;
   if (notification.tipo === "cita" && !preferences.citas_enabled) return 0;
+  if (notification.tipo === "estudio" && !preferences.estudios_enabled) return 0;
 
   const { data: subscriptions, error } = await supabase
     .from("notification_subscriptions")
@@ -179,6 +183,7 @@ async function notifyUser(
   if (!supabase) throw new Error("Supabase no está configurado.");
   if (notification.tipo === "medicamento" && !preferences.medicamentos_enabled) return false;
   if (notification.tipo === "cita" && !preferences.citas_enabled) return false;
+  if (notification.tipo === "estudio" && !preferences.estudios_enabled) return false;
 
   const { data, error } = await supabase
     .from("app_notifications")
@@ -334,6 +339,63 @@ async function scanAppointmentReminders(now: Date): Promise<number> {
   return created;
 }
 
+async function scanStudyReminders(now: Date): Promise<number> {
+  if (!supabase) throw new Error("Supabase no está configurado.");
+
+  const utcDate = now.toISOString().slice(0, 10);
+  const fromDate = shiftLocalDateTime(`${utcDate}T00:00`, -1440).slice(0, 10);
+  const toDate = shiftLocalDateTime(`${utcDate}T00:00`, 4 * 1440).slice(0, 10);
+  const { data: studies, error } = await supabase
+    .from("estudios")
+    .select("id, usuario_id, titulo, fecha_programada, hora, estado, recordatorio")
+    .gte("fecha_programada", fromDate)
+    .lte("fecha_programada", toDate);
+
+  if (error) throw error;
+
+  let created = 0;
+  const preferencesByUser = new Map<string, Promise<NotificationPreferences>>();
+  for (const study of studies || []) {
+    if (
+      study.recordatorio === false ||
+      !["pendiente", "programado"].includes(study.estado) ||
+      !study.fecha_programada ||
+      !study.hora
+    ) continue;
+
+    if (!preferencesByUser.has(study.usuario_id)) {
+      preferencesByUser.set(study.usuario_id, getPreferences(study.usuario_id));
+    }
+    const preferences = await preferencesByUser.get(study.usuario_id)!;
+    if (!preferences.estudios_enabled) continue;
+
+    const nowLocal = formatLocalDateTime(now, preferences.timezone);
+    const scheduledAt = `${study.fecha_programada}T${study.hora.slice(0, 5)}`;
+    if (scheduledAt <= nowLocal) continue;
+
+    for (const leadMinutes of [1440, 60]) {
+      const dueAt = shiftLocalDateTime(scheduledAt, -leadMinutes);
+      if (!isDueInCurrentWindow(dueAt, nowLocal)) continue;
+
+      const leadLabel = leadMinutes === 1440 ? "24 horas" : "1 hora";
+      const inserted = await notifyUser(study.usuario_id, {
+        tipo: "estudio",
+        titulo: `Recordatorio de estudio: ${study.titulo}`,
+        mensaje: `Tu estudio es en ${leadLabel}, el ${study.fecha_programada} a las ${study.hora.slice(0, 5)}.`,
+        event_key: `study:${study.id}:${leadMinutes}:${study.fecha_programada}:${study.hora}`,
+        datos: {
+          url: "/estudios",
+          estudio_id: study.id,
+          fecha: study.fecha_programada,
+          hora: study.hora
+        }
+      }, preferences);
+      if (inserted) created++;
+    }
+  }
+  return created;
+}
+
 function timingSafeEqual(a: string, b: string): boolean {
   const aBytes = new TextEncoder().encode(a);
   const bBytes = new TextEncoder().encode(b);
@@ -360,14 +422,16 @@ Deno.serve(async request => {
 
   try {
     const now = new Date();
-    const [medicationReminders, appointmentReminders] = await Promise.all([
+    const [medicationReminders, appointmentReminders, studyReminders] = await Promise.all([
       scanMedicationReminders(now),
-      scanAppointmentReminders(now)
+      scanAppointmentReminders(now),
+      scanStudyReminders(now)
     ]);
     return Response.json({
       success: true,
       medicationReminders,
-      appointmentReminders
+      appointmentReminders,
+      studyReminders
     });
   } catch (error) {
     console.error(

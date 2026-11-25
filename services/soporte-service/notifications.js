@@ -26,6 +26,7 @@ function defaultPreferences(usuarioId) {
     push_enabled: false,
     medicamentos_enabled: true,
     citas_enabled: true,
+    estudios_enabled: true,
     soporte_enabled: true,
     timezone: defaultTimezone
   };
@@ -47,6 +48,7 @@ function notificationUrl(notification) {
   if (typeof url === 'string' && url.startsWith('/') && !url.startsWith('//')) return url;
   if (notification.tipo === 'medicamento') return '/tratamientos';
   if (notification.tipo === 'cita') return '/citas';
+  if (notification.tipo === 'estudio') return '/estudios';
   return '/soporte';
 }
 
@@ -60,6 +62,7 @@ async function sendPush(usuarioId, notification, preferences) {
   const preferenceByType = {
     medicamento: 'medicamentos_enabled',
     cita: 'citas_enabled',
+    estudio: 'estudios_enabled',
     soporte: 'soporte_enabled'
   };
   if (!preferences[preferenceByType[notification.tipo]]) return 0;
@@ -129,6 +132,7 @@ async function notifyUser(usuarioId, notification) {
   const enabledByType = {
     medicamento: preferences.medicamentos_enabled,
     cita: preferences.citas_enabled,
+    estudio: preferences.estudios_enabled,
     soporte: preferences.soporte_enabled
   };
   if (!enabledByType[notification.tipo]) return null;

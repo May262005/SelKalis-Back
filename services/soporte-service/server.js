@@ -439,7 +439,7 @@ app.get('/notifications/preferences', authenticate, async (req, res) => {
 });
 
 app.put('/notifications/preferences', authenticate, async (req, res) => {
-  const allowedFields = ['medicamentos_enabled', 'citas_enabled', 'soporte_enabled'];
+  const allowedFields = ['medicamentos_enabled', 'citas_enabled', 'estudios_enabled', 'soporte_enabled'];
   const changes = {};
   for (const field of allowedFields) {
     if (req.body?.[field] !== undefined) {
