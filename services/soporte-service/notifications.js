@@ -54,14 +54,14 @@ function notificationUrl(tipo) {
 }
 
 async function sendPush(usuarioId, notification, preferences) {
-  if (!pushConfigured || !preferences.push_enabled) return;
+  if (!pushConfigured || !preferences.push_enabled) return 0;
 
   const preferenceByType = {
     medicamento: 'medicamentos_enabled',
     cita: 'citas_enabled',
     soporte: 'soporte_enabled'
   };
-  if (!preferences[preferenceByType[notification.tipo]]) return;
+  if (!preferences[preferenceByType[notification.tipo]]) return 0;
 
   const { data: subscriptions, error } = await supabase
     .from('notification_subscriptions')
@@ -69,7 +69,7 @@ async function sendPush(usuarioId, notification, preferences) {
     .eq('usuario_id', usuarioId);
 
   if (error) throw error;
-  if (!subscriptions?.length) return;
+  if (!subscriptions?.length) return 0;
 
   const payload = JSON.stringify({
     notification: {
@@ -89,9 +89,10 @@ async function sendPush(usuarioId, notification, preferences) {
     }
   });
 
-  await Promise.all(subscriptions.map(async subscription => {
+  const deliveries = await Promise.all(subscriptions.map(async subscription => {
     try {
       await webpush.sendNotification(subscription, payload);
+      return true;
     } catch (pushError) {
       if (pushError.statusCode === 404 || pushError.statusCode === 410) {
         const { error: deleteError } = await supabase
@@ -100,11 +101,12 @@ async function sendPush(usuarioId, notification, preferences) {
           .eq('endpoint', subscription.endpoint);
         if (deleteError) throw deleteError;
         console.info('Suscripción push expirada eliminada.');
-        return;
+        return false;
       }
       throw pushError;
     }
   }));
+  return deliveries.filter(Boolean).length;
 }
 
 async function notifyUser(usuarioId, notification) {
@@ -291,6 +293,7 @@ module.exports = {
   pushPublicKey,
   defaultPreferences,
   getPreferences,
+  sendPush,
   notifyUser,
   notifyAdmins,
   startReminderScheduler
