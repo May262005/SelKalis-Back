@@ -8,7 +8,6 @@ const {
   pushPublicKey,
   defaultPreferences,
   getPreferences,
-  sendPush,
   notifyUser,
   notifyAdmins,
   startReminderScheduler
@@ -414,46 +413,6 @@ app.get('/notifications/config', authenticate, (req, res) => {
       publicKey: pushConfigured ? pushPublicKey : ''
     }
   });
-});
-
-app.post('/notifications/test-push', authenticate, async (req, res) => {
-  if (!pushConfigured) {
-    return res.status(503).json({
-      success: false,
-      error: 'El servicio de notificaciones push aún no está configurado en Render.'
-    });
-  }
-
-  try {
-    const preferences = await getPreferences(req.user.id);
-    if (!preferences.push_enabled) {
-      return res.status(409).json({ success: false, error: 'Activa primero las notificaciones push para tu cuenta.' });
-    }
-    if (!preferences.soporte_enabled) {
-      return res.status(409).json({ success: false, error: 'Activa la categoría de soporte para probar la notificación.' });
-    }
-
-    const sent = await sendPush(req.user.id, {
-      tipo: 'soporte',
-      event_key: `push-test:${req.user.id}:${Date.now()}`
-    }, preferences);
-
-    if (!sent) {
-      return res.status(409).json({
-        success: false,
-        error: 'No hay una suscripción push activa. Desactiva y vuelve a activar las notificaciones en Perfil.'
-      });
-    }
-
-    return res.json({ success: true, data: { sent } });
-  } catch (error) {
-    console.error('Error al enviar una notificación push de prueba:', error);
-    if (isNotificationsSchemaMissing(error)) return notificationSchemaUnavailable(res);
-    const message = error?.statusCode === 401 || error?.statusCode === 403
-      ? 'La suscripción no coincide con las claves VAPID actuales. Desactiva y vuelve a activar las notificaciones en Perfil.'
-      : 'El servidor no pudo entregar la notificación push de prueba. Revisa los logs de soporte-service en Render.';
-    return res.status(502).json({ success: false, error: message });
-  }
 });
 
 app.get('/notifications/preferences', authenticate, async (req, res) => {

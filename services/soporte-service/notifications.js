@@ -41,15 +41,11 @@ async function getPreferences(usuarioId) {
   return { ...defaultPreferences(usuarioId), ...(data || {}) };
 }
 
-function genericPushMessage(tipo) {
-  if (tipo === 'medicamento') return 'Tienes un recordatorio de medicamento. Abre Sel Kalis para ver los detalles.';
-  if (tipo === 'cita') return 'Tienes un recordatorio de cita. Abre Sel Kalis para ver los detalles.';
-  return 'Hay una actualización en tu solicitud de soporte. Abre Sel Kalis para revisarla.';
-}
-
-function notificationUrl(tipo) {
-  if (tipo === 'medicamento') return '/tratamientos';
-  if (tipo === 'cita') return '/citas';
+function notificationUrl(notification) {
+  const url = notification.datos?.url;
+  if (typeof url === 'string' && url.startsWith('/') && !url.startsWith('//')) return url;
+  if (notification.tipo === 'medicamento') return '/tratamientos';
+  if (notification.tipo === 'cita') return '/citas';
   return '/soporte';
 }
 
@@ -73,8 +69,8 @@ async function sendPush(usuarioId, notification, preferences) {
 
   const payload = JSON.stringify({
     notification: {
-      title: 'Sel Kalis',
-      body: genericPushMessage(notification.tipo),
+      title: notification.titulo,
+      body: notification.mensaje,
       icon: '/icons/selkalis-192.png',
       badge: '/icons/selkalis-192.png',
       tag: notification.event_key,
@@ -82,7 +78,7 @@ async function sendPush(usuarioId, notification, preferences) {
         onActionClick: {
           default: {
             operation: 'navigateLastFocusedOrOpen',
-            url: notificationUrl(notification.tipo)
+            url: notificationUrl(notification)
           }
         }
       }
@@ -299,7 +295,6 @@ module.exports = {
   pushPublicKey,
   defaultPreferences,
   getPreferences,
-  sendPush,
   notifyUser,
   notifyAdmins,
   startReminderScheduler
