@@ -12,7 +12,7 @@ const app = express();
 const PORT = process.env.PORT || 3010;
 const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:4200').replace(/\/$/, '');
 const ticketStatuses = ['abierto', 'en_proceso', 'resuelto', 'cerrado'];
-const ticketCategories = ['tecnica', 'cuenta', 'citas', 'otra'];
+const ticketCategories = ['tecnica'];
 
 app.use(cors({ origin: frontendUrl, credentials: true }));
 app.use(express.json({ limit: '20kb' }));
@@ -43,7 +43,11 @@ function authenticate(req, res, next) {
     .eq('id', decoded.id)
     .single()
     .then(({ data: user, error }) => {
-      if (error || !user) {
+      if (error && error.code !== 'PGRST116') {
+        console.error('Error consultando usuario en Supabase:', error);
+        return res.status(500).json({ success: false, error: 'No se pudo validar el usuario en la base de datos' });
+      }
+      if (!user) {
         return res.status(401).json({ success: false, error: 'Usuario no encontrado' });
       }
       if (user.activo === false) {

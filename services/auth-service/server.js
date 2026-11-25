@@ -168,7 +168,11 @@ async function enviarCorreo(email, asunto, html) {
 
     return true;
   } catch (error) {
-    console.error('Error enviando correo con SendGrid:', error.message);
+    console.error(
+      'Error enviando correo con SendGrid:',
+      error.message,
+      error.response?.body ? JSON.stringify(error.response.body) : ''
+    );
     return false;
   }
 }
