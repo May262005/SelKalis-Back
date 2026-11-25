@@ -12,7 +12,15 @@ const app = express();
 const PORT = process.env.PORT || 3010;
 const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:4200').replace(/\/$/, '');
 const ticketStatuses = ['abierto', 'en_proceso', 'resuelto', 'cerrado'];
-const ticketCategories = ['tecnica'];
+const ticketCategories = [
+  'tecnica',
+  'cuenta',
+  'citas',
+  'estudios',
+  'tratamientos',
+  'documentos',
+  'otro'
+];
 
 app.use(cors({ origin: frontendUrl, credentials: true }));
 app.use(express.json({ limit: '20kb' }));
@@ -73,6 +81,38 @@ function requireAdmin(req, res, next) {
 
 function readMessage(value) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function automaticReply(message) {
+  const normalized = message
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+
+  const replies = [
+    {
+      match: /\b(iniciar sesion|inicio de sesion|entrar a mi cuenta|acceder|login|contrasena|clave|password|recuperar)\b/,
+      answer: 'Para iniciar sesión, usa el correo y la contraseña de tu registro. Si olvidaste la contraseña, selecciona “Olvidé mi contraseña” en la pantalla de acceso. No compartas aquí tu contraseña ni códigos.'
+    },
+    {
+      match: /\b(estudio|estudios|resultado|resultados|laboratorio|analisis)\b/,
+      answer: 'Revisa la sección Estudios y confirma que hayas ingresado con la cuenta donde se registraron. Si siguen sin aparecer, registra una incidencia en Soporte para que el equipo pueda revisarlo.'
+    },
+    {
+      match: /\b(cita|citas|consulta|consultas)\b/,
+      answer: 'Consulta la sección Citas desde el menú de Sel Kalis. Si tu cita no aparece o tienes problemas para gestionarla, registra una incidencia en Soporte.'
+    },
+    {
+      match: /\b(ticket|incidencia|reporte|seguimiento)\b/,
+      answer: 'En Soporte > Incidencias puedes registrar un reporte y consultar su estado desde “Mis reportes”.'
+    }
+  ];
+
+  const faq = replies.find(item => item.match.test(normalized));
+  const answer = faq?.answer
+    ?? 'Gracias por escribir. No encontré una respuesta automática para esta consulta. El mensaje quedó en la conversación para que soporte lo revise. Para darle seguimiento, también puedes registrar una incidencia en Soporte.';
+
+  return `Respuesta automática: ${answer}`;
 }
 
 function requesterName(user) {
@@ -140,25 +180,39 @@ app.post('/chat/mensajes', authenticate, async (req, res) => {
 
   try {
     const conversation = await getConversationForUser(req.user);
+    const automaticMessage = automaticReply(mensaje);
+    const createdAt = new Date();
     const { data, error } = await supabase
       .from('support_chat_messages')
-      .insert({
-        conversation_id: conversation.id,
-        sender_id: req.user.id,
-        sender_role: 'user',
-        mensaje
-      })
-      .select('*')
-      .single();
+      .insert([
+        {
+          conversation_id: conversation.id,
+          sender_id: req.user.id,
+          sender_role: 'user',
+          mensaje,
+          created_at: createdAt.toISOString()
+        },
+        {
+          conversation_id: conversation.id,
+          sender_id: req.user.id,
+          sender_role: 'admin',
+          mensaje: automaticMessage,
+          created_at: new Date(createdAt.getTime() + 1).toISOString()
+        }
+      ])
+      .select('*');
 
     if (error) throw error;
+    const orderedMessages = data.sort((first, second) =>
+      first.created_at.localeCompare(second.created_at)
+    );
     const { error: updateError } = await supabase
       .from('support_conversations')
-      .update({ ultimo_mensaje: mensaje, updated_at: new Date().toISOString() })
+      .update({ ultimo_mensaje: automaticMessage, updated_at: new Date().toISOString() })
       .eq('id', conversation.id);
     if (updateError) throw updateError;
 
-    return res.status(201).json({ success: true, data });
+    return res.status(201).json({ success: true, data: orderedMessages });
   } catch (error) {
     console.error('Error en POST /chat/mensajes:', error);
     return res.status(500).json({ success: false, error: 'No se pudo enviar el mensaje' });
@@ -261,6 +315,10 @@ app.get('/tickets', authenticate, async (req, res) => {
 });
 
 app.post('/tickets', authenticate, async (req, res) => {
+  if (req.user.rol === 'admin') {
+    return res.status(403).json({ success: false, error: 'Los administradores no pueden registrar incidencias' });
+  }
+
   const asunto = readMessage(req.body?.asunto);
   const descripcion = readMessage(req.body?.descripcion);
   const categoria = req.body?.categoria;
